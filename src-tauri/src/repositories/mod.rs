@@ -9,6 +9,7 @@ use crate::models::domain_models::InvoiceSummary;
 pub mod master_repo;
 pub mod invoice_repo;
 pub mod note_repo;
+pub mod report_repo;
 
 pub trait MasterRepository: Send + Sync {
     // Customers
@@ -64,4 +65,13 @@ pub trait NoteRepository: Send + Sync {
     fn insert_credit_note(&self, conn: &mut Connection, row: &CreditNoteRow) -> Result<(), AppError>;
     fn update_credit_note_status(&self, conn: &mut Connection, number: &str, status: &str) -> Result<(), AppError>;
     fn find_credit_note(&self, conn: &Connection, number: &str) -> Result<Option<CreditNoteRow>, AppError>;
+}
+
+pub trait ReportRepository: Send + Sync {
+    /// Recomputes summary_monthly_sales for one financial year from `invoices`.
+    fn refresh_monthly_summary(&self, conn: &Connection, financial_year_id: i64) -> Result<(), AppError>;
+    /// Recomputes summary_customer_sales for one financial year from `invoices`.
+    fn refresh_customer_summary(&self, conn: &Connection, financial_year_id: i64) -> Result<(), AppError>;
+    /// Recomputes summary_supplier_sales for one financial year from `invoice_items`.
+    fn refresh_supplier_summary(&self, conn: &Connection, financial_year_id: i64) -> Result<(), AppError>;
 }
