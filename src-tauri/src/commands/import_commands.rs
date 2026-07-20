@@ -1,35 +1,35 @@
-use tauri::State;
-use rusqlite::params;
-use std::path::Path;
-use std::collections::HashMap;
-use calamine::{open_workbook_auto, DataType, Reader};
 use crate::error::AppError;
-use crate::state::DbState;
 use crate::models::database_models::{
-    ImportTemplateRow, CustomerRow, SupplierRow, ItemRow, InvoiceRow, InvoiceItemRow, ImportBatchRow, ValidationExceptionRow
+    CustomerRow, ImportBatchRow, ImportTemplateRow, InvoiceItemRow, InvoiceRow, ItemRow,
+    SupplierRow, ValidationExceptionRow,
 };
 use crate::models::domain_models::ImportPreview;
-use crate::services::import_service::ImportService;
-use crate::repositories::master_repo::SqliteMasterRepository;
 use crate::repositories::invoice_repo::SqliteInvoiceRepository;
-use crate::repositories::MasterRepository;
+use crate::repositories::master_repo::SqliteMasterRepository;
+use crate::repositories::report_repo::SqliteReportRepository;
 use crate::repositories::InvoiceRepository;
+use crate::repositories::MasterRepository;
+use crate::repositories::ReportRepository;
+use crate::services::import_service::ImportService;
+use crate::state::DbState;
+use crate::utils::dates::format_db_date;
 use crate::utils::dates::parse_date;
 use crate::utils::hash::compute_file_hash;
-use crate::utils::dates::format_db_date;
+use calamine::{open_workbook_auto, DataType, Reader};
+use rusqlite::params;
+use std::collections::HashMap;
+use std::path::Path;
+use tauri::State;
 
 #[tauri::command]
-pub fn get_import_templates(
-    state: State<'_, DbState>,
-) -> Result<Vec<ImportTemplateRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+pub fn get_import_templates(state: State<'_, DbState>) -> Result<Vec<ImportTemplateRow>, AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let mut stmt = conn
@@ -60,7 +60,7 @@ pub fn get_import_templates(
             message: format!("Failed to parse template row: {}", e),
         })?);
     }
-    
+
     Ok(templates)
 }
 
@@ -71,14 +71,13 @@ pub fn preview_import_file(
     template_id: i64,
     user_name: String,
 ) -> Result<ImportPreview, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     ImportService::parse_and_preview(conn, &file_path, template_id, &user_name)
@@ -93,21 +92,25 @@ pub fn commit_import_batch(
     user_remarks: Option<String>,
 ) -> Result<i64, AppError> {
     log::info!("Committing import batch from file: {}", file_path);
-    
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_mut().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let path = Path::new(&file_path);
-    let file_hash = compute_file_hash(path).map_err(|e| AppError::Excel(format!("Failed to read file hash: {}", e)))?;
+    let file_hash = compute_file_hash(path)
+        .map_err(|e| AppError::Excel(format!("Failed to read file hash: {}", e)))?;
     let file_size = path.metadata().map(|m| m.len() as i64).unwrap_or(0);
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
 
     // 1. Double check duplicates in WAL isolation
     let is_duplicate: bool = conn
@@ -167,7 +170,8 @@ pub fn commit_import_batch(
         .map_err(|_| AppError::Excel("Template source type lookup failed".to_string()))?;
 
     // Open workbook
-    let mut workbook = open_workbook_auto(path).map_err(|e| AppError::Excel(format!("Failed to open Excel: {}", e)))?;
+    let mut workbook = open_workbook_auto(path)
+        .map_err(|e| AppError::Excel(format!("Failed to open Excel: {}", e)))?;
     let sheet_name = workbook
         .sheet_names()
         .first()
@@ -179,7 +183,9 @@ pub fn commit_import_batch(
         .map_err(|e| AppError::Excel(format!("Failed to read sheet {}: {}", sheet_name, e)))?;
 
     let mut rows_iter = range.rows();
-    let headers_row = rows_iter.next().ok_or_else(|| AppError::Excel("Missing headers row".to_string()))?;
+    let headers_row = rows_iter
+        .next()
+        .ok_or_else(|| AppError::Excel("Missing headers row".to_string()))?;
 
     let mut col_index_to_key = HashMap::new();
     for (idx, cell) in headers_row.iter().enumerate() {
@@ -200,7 +206,8 @@ pub fn commit_import_batch(
         )
         .map_err(|_| AppError::Db {
             code: "ERR_DB_001".to_string(),
-            message: "No active financial year defined. Create an active financial year first.".to_string(),
+            message: "No active financial year defined. Create an active financial year first."
+                .to_string(),
         })?;
 
     // Wrap operations inside a single database transaction (Unit of Work)
@@ -219,7 +226,7 @@ pub fn commit_import_batch(
         code: "ERR_DB_003".to_string(),
         message: format!("Failed to create batch record: {}", e),
     })?;
-    
+
     let batch_id = tx.last_insert_rowid();
 
     let master_repo = SqliteMasterRepository;
@@ -242,12 +249,20 @@ pub fn commit_import_batch(
             }
         }
 
-        let inv_no = row_data.get("invoice_number").and_then(|c| c.as_string()).unwrap_or_default().trim().to_string();
+        let inv_no = row_data
+            .get("invoice_number")
+            .and_then(|c| c.as_string())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         if inv_no.is_empty() {
             continue; // Skip empty rows
         }
 
-        let inv_date_str = row_data.get("invoice_date").and_then(|c| c.as_string()).unwrap_or_default();
+        let inv_date_str = row_data
+            .get("invoice_date")
+            .and_then(|c| c.as_string())
+            .unwrap_or_default();
         let parsed_inv_date = parse_date(&inv_date_str);
         if parsed_inv_date.is_none() {
             error_count += 1;
@@ -256,8 +271,18 @@ pub fn commit_import_batch(
         let inv_date = format_db_date(parsed_inv_date.unwrap());
 
         // Extract Customer Code
-        let cust_code = row_data.get("customer_code").and_then(|c| c.as_string()).unwrap_or_default().trim().to_string();
-        let cust_name = row_data.get("customer_name").and_then(|c| c.as_string()).unwrap_or_default().trim().to_string();
+        let cust_code = row_data
+            .get("customer_code")
+            .and_then(|c| c.as_string())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let cust_name = row_data
+            .get("customer_name")
+            .and_then(|c| c.as_string())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let customer_id: i64 = match tx.query_row(
             "SELECT id FROM customers WHERE customer_code = ?",
             [&cust_code],
@@ -280,8 +305,18 @@ pub fn commit_import_batch(
         };
 
         // Extract Part details
-        let part_code = row_data.get("part_code").and_then(|c| c.as_string()).unwrap_or_default().trim().to_string();
-        let part_name = row_data.get("part_name").and_then(|c| c.as_string()).unwrap_or_default().trim().to_string();
+        let part_code = row_data
+            .get("part_code")
+            .and_then(|c| c.as_string())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let part_name = row_data
+            .get("part_name")
+            .and_then(|c| c.as_string())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let part_exists: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM items WHERE part_code = ?)",
@@ -305,16 +340,46 @@ pub fn commit_import_batch(
         }
 
         // Values
-        let qty = row_data.get("quantity").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let rate = row_data.get("rate_pre_unit").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let ass_val = row_data.get("assessable_value").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let cgst_rate = row_data.get("cgst_rate").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let cgst = row_data.get("cgst_amount").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let sgst_rate = row_data.get("sgst_rate").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let sgst = row_data.get("sgst_amount").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let igst_rate = row_data.get("igst_rate").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let igst = row_data.get("igst_amount").and_then(|c| c.as_f64()).unwrap_or(0.0);
-        let total_val = row_data.get("total_value").and_then(|c| c.as_f64()).unwrap_or(0.0);
+        let qty = row_data
+            .get("quantity")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let rate = row_data
+            .get("rate_pre_unit")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let ass_val = row_data
+            .get("assessable_value")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let cgst_rate = row_data
+            .get("cgst_rate")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let cgst = row_data
+            .get("cgst_amount")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let sgst_rate = row_data
+            .get("sgst_rate")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let sgst = row_data
+            .get("sgst_amount")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let igst_rate = row_data
+            .get("igst_rate")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let igst = row_data
+            .get("igst_amount")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
+        let total_val = row_data
+            .get("total_value")
+            .and_then(|c| c.as_f64())
+            .unwrap_or(0.0);
 
         let item_row = InvoiceItemRow {
             id: None,
@@ -332,39 +397,44 @@ pub fn commit_import_batch(
             total_value: total_val,
         };
 
-        invoice_items_buffer.entry(inv_no.clone()).or_insert_with(Vec::new).push(item_row);
+        invoice_items_buffer
+            .entry(inv_no.clone())
+            .or_insert_with(Vec::new)
+            .push(item_row);
 
         // Update header accumulation
-        let header = invoice_headers_buffer.entry(inv_no.clone()).or_insert_with(|| InvoiceRow {
-            invoice_number: inv_no.clone(),
-            invoice_no_long: None,
-            invoice_date: inv_date.clone(),
-            customer_id,
-            financial_year_id: active_fy_id,
-            total_taxable: 0.0,
-            total_cgst: 0.0,
-            total_sgst: 0.0,
-            total_igst: 0.0,
-            total_cess: 0.0,
-            total_value: 0.0,
-            irn: None,
-            irn_date: None,
-            place_of_supply: None,
-            reverse_charge: Some("N".to_string()),
-            invoice_type: Some("Regular B2B".to_string()),
-            status: "Imported".to_string(),
-            cancellation_date: None,
-            import_batch_id: Some(batch_id),
-            created_at: "".to_string(),
-            updated_at: "".to_string(),
-        });
+        let header = invoice_headers_buffer
+            .entry(inv_no.clone())
+            .or_insert_with(|| InvoiceRow {
+                invoice_number: inv_no.clone(),
+                invoice_no_long: None,
+                invoice_date: inv_date.clone(),
+                customer_id,
+                financial_year_id: active_fy_id,
+                total_taxable: 0.0,
+                total_cgst: 0.0,
+                total_sgst: 0.0,
+                total_igst: 0.0,
+                total_cess: 0.0,
+                total_value: 0.0,
+                irn: None,
+                irn_date: None,
+                place_of_supply: None,
+                reverse_charge: Some("N".to_string()),
+                invoice_type: Some("Regular B2B".to_string()),
+                status: "Imported".to_string(),
+                cancellation_date: None,
+                import_batch_id: Some(batch_id),
+                created_at: "".to_string(),
+                updated_at: "".to_string(),
+            });
 
         header.total_taxable += ass_val;
         header.total_cgst += cgst;
         header.total_sgst += sgst;
         header.total_igst += igst;
         header.total_value += total_val;
-        
+
         success_count += 1;
     }
 
@@ -384,11 +454,14 @@ pub fn commit_import_batch(
         }
 
         // Delete existing invoice lines if overwriting
-        tx.execute("DELETE FROM invoice_items WHERE invoice_number = ?", [&inv_no])
-            .map_err(|e| AppError::Db {
-                code: "ERR_DB_003".to_string(),
-                message: format!("Failed to clear old invoice lines: {}", e),
-            })?;
+        tx.execute(
+            "DELETE FROM invoice_items WHERE invoice_number = ?",
+            [&inv_no],
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to clear old invoice lines: {}", e),
+        })?;
         tx.execute("DELETE FROM invoices WHERE invoice_number = ?", [&inv_no])
             .map_err(|e| AppError::Db {
                 code: "ERR_DB_003".to_string(),
@@ -453,6 +526,12 @@ pub fn commit_import_batch(
         }
     }
 
+    // Rebuild materialized summary rollups for the active financial year (Phase 5 rollup)
+    let report_repo = SqliteReportRepository;
+    report_repo.refresh_monthly_summary(&tx, active_fy_id)?;
+    report_repo.refresh_customer_summary(&tx, active_fy_id)?;
+    report_repo.refresh_supplier_summary(&tx, active_fy_id)?;
+
     // Update batch status to completed
     tx.execute(
         "UPDATE import_batches 
@@ -485,6 +564,10 @@ pub fn commit_import_batch(
         code: "ERR_DB_003".to_string(),
         message: format!("Failed to commit import transaction: {}", e),
     })?;
+
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
 
     log::info!("Successfully committed import batch ID: {}", batch_id);
     Ok(batch_id)

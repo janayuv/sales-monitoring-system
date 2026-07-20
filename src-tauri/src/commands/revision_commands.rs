@@ -1,8 +1,12 @@
-use tauri::State;
-use rusqlite::params;
 use crate::error::AppError;
+use crate::models::database_models::{
+    CreditNoteRow, DebitNoteItemRow, DebitNoteRow, SupplierPriceRevisionRow,
+};
+use crate::repositories::report_repo::SqliteReportRepository;
+use crate::repositories::ReportRepository;
 use crate::state::DbState;
-use crate::models::database_models::{SupplierPriceRevisionRow, DebitNoteRow, DebitNoteItemRow, CreditNoteRow};
+use rusqlite::params;
+use tauri::State;
 
 #[tauri::command]
 pub fn create_price_revision(
@@ -14,16 +18,19 @@ pub fn create_price_revision(
     effective_date: String,
     remarks: Option<String>,
 ) -> Result<i64, AppError> {
-    log::info!("Creating price revision for supplier_id: {}, part: {}", supplier_id, part_code);
-    
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_mut().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    log::info!(
+        "Creating price revision for supplier_id: {}, part: {}",
+        supplier_id,
+        part_code
+    );
+
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let tx = conn.transaction().map_err(|e| AppError::Db {
@@ -65,15 +72,16 @@ pub fn create_price_revision(
 }
 
 #[tauri::command]
-pub fn get_price_revisions(state: State<'_, DbState>) -> Result<Vec<SupplierPriceRevisionRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+pub fn get_price_revisions(
+    state: State<'_, DbState>,
+) -> Result<Vec<SupplierPriceRevisionRow>, AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let mut stmt = conn
@@ -123,14 +131,13 @@ pub fn preview_revision_recovery(
     state: State<'_, DbState>,
     revision_id: i64,
 ) -> Result<Vec<DebitNoteItemRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     // Load price revision details
@@ -177,36 +184,39 @@ pub fn preview_revision_recovery(
         })?;
 
     let rows = stmt
-        .query_map(params![rev.part_code, rev.effective_date, rev.new_price], |row| {
-            let invoice_number: String = row.get(0)?;
-            let part_code: String = row.get(1)?;
-            let quantity: f64 = row.get(2)?;
-            let rate_pre_unit: f64 = row.get(3)?;
-            let cgst_rate: f64 = row.get(4)?;
-            let sgst_rate: f64 = row.get(5)?;
-            let igst_rate: f64 = row.get(6)?;
+        .query_map(
+            params![rev.part_code, rev.effective_date, rev.new_price],
+            |row| {
+                let invoice_number: String = row.get(0)?;
+                let part_code: String = row.get(1)?;
+                let quantity: f64 = row.get(2)?;
+                let rate_pre_unit: f64 = row.get(3)?;
+                let cgst_rate: f64 = row.get(4)?;
+                let sgst_rate: f64 = row.get(5)?;
+                let igst_rate: f64 = row.get(6)?;
 
-            let rate_diff = rate_pre_unit - rev.new_price;
-            let assessable_diff = quantity * rate_diff;
-            let cgst_amount = assessable_diff * (cgst_rate / 100.0);
-            let sgst_amount = assessable_diff * (sgst_rate / 100.0);
-            let igst_amount = assessable_diff * (igst_rate / 100.0);
-            let total_diff = assessable_diff + cgst_amount + sgst_amount + igst_amount;
+                let rate_diff = rate_pre_unit - rev.new_price;
+                let assessable_diff = quantity * rate_diff;
+                let cgst_amount = assessable_diff * (cgst_rate / 100.0);
+                let sgst_amount = assessable_diff * (sgst_rate / 100.0);
+                let igst_amount = assessable_diff * (igst_rate / 100.0);
+                let total_diff = assessable_diff + cgst_amount + sgst_amount + igst_amount;
 
-            Ok(DebitNoteItemRow {
-                id: None,
-                debit_note_number: "".to_string(),
-                invoice_number,
-                part_code,
-                quantity,
-                rate_difference: rate_diff,
-                assessable_difference: assessable_diff,
-                cgst_amount,
-                sgst_amount,
-                igst_amount,
-                total_difference: total_diff,
-            })
-        })
+                Ok(DebitNoteItemRow {
+                    id: None,
+                    debit_note_number: "".to_string(),
+                    invoice_number,
+                    part_code,
+                    quantity,
+                    rate_difference: rate_diff,
+                    assessable_difference: assessable_diff,
+                    cgst_amount,
+                    sgst_amount,
+                    igst_amount,
+                    total_difference: total_diff,
+                })
+            },
+        )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
             message: format!("Failed to run recovery preview: {}", e),
@@ -229,16 +239,19 @@ pub fn generate_debit_note(
     debit_note_number: String,
     remarks: Option<String>,
 ) -> Result<(), AppError> {
-    log::info!("Generating debit note: {} from revision ID: {}", debit_note_number, revision_id);
-    
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_mut().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    log::info!(
+        "Generating debit note: {} from revision ID: {}",
+        debit_note_number,
+        revision_id
+    );
+
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let tx = conn.transaction().map_err(|e| AppError::Db {
@@ -290,36 +303,39 @@ pub fn generate_debit_note(
         })?;
 
     let rows = stmt
-        .query_map(params![rev.part_code, rev.effective_date, rev.new_price], |row| {
-            let invoice_number: String = row.get(0)?;
-            let part_code: String = row.get(1)?;
-            let quantity: f64 = row.get(2)?;
-            let rate_pre_unit: f64 = row.get(3)?;
-            let cgst_rate: f64 = row.get(4)?;
-            let sgst_rate: f64 = row.get(5)?;
-            let igst_rate: f64 = row.get(6)?;
+        .query_map(
+            params![rev.part_code, rev.effective_date, rev.new_price],
+            |row| {
+                let invoice_number: String = row.get(0)?;
+                let part_code: String = row.get(1)?;
+                let quantity: f64 = row.get(2)?;
+                let rate_pre_unit: f64 = row.get(3)?;
+                let cgst_rate: f64 = row.get(4)?;
+                let sgst_rate: f64 = row.get(5)?;
+                let igst_rate: f64 = row.get(6)?;
 
-            let rate_diff = rate_pre_unit - rev.new_price;
-            let assessable_diff = quantity * rate_diff;
-            let cgst_amount = assessable_diff * (cgst_rate / 100.0);
-            let sgst_amount = assessable_diff * (sgst_rate / 100.0);
-            let igst_amount = assessable_diff * (igst_rate / 100.0);
-            let total_diff = assessable_diff + cgst_amount + sgst_amount + igst_amount;
+                let rate_diff = rate_pre_unit - rev.new_price;
+                let assessable_diff = quantity * rate_diff;
+                let cgst_amount = assessable_diff * (cgst_rate / 100.0);
+                let sgst_amount = assessable_diff * (sgst_rate / 100.0);
+                let igst_amount = assessable_diff * (igst_rate / 100.0);
+                let total_diff = assessable_diff + cgst_amount + sgst_amount + igst_amount;
 
-            Ok(DebitNoteItemRow {
-                id: None,
-                debit_note_number: debit_note_number.clone(),
-                invoice_number,
-                part_code,
-                quantity,
-                rate_difference: rate_diff,
-                assessable_difference: assessable_diff,
-                cgst_amount,
-                sgst_amount,
-                igst_amount,
-                total_difference: total_diff,
-            })
-        })
+                Ok(DebitNoteItemRow {
+                    id: None,
+                    debit_note_number: debit_note_number.clone(),
+                    invoice_number,
+                    part_code,
+                    quantity,
+                    rate_difference: rate_diff,
+                    assessable_difference: assessable_diff,
+                    cgst_amount,
+                    sgst_amount,
+                    igst_amount,
+                    total_difference: total_diff,
+                })
+            },
+        )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
             message: format!("Failed to run recovery calculations: {}", e),
@@ -398,14 +414,13 @@ pub fn generate_debit_note(
 
 #[tauri::command]
 pub fn list_debit_notes(state: State<'_, DbState>) -> Result<Vec<DebitNoteRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let mut stmt = conn
@@ -458,14 +473,13 @@ pub fn approve_debit_note(
     debit_note_number: String,
     user_name: String,
 ) -> Result<(), AppError> {
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_mut().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let tx = conn.transaction().map_err(|e| AppError::Db {
@@ -502,6 +516,10 @@ pub fn approve_debit_note(
         message: format!("Failed to commit approval: {}", e),
     })?;
 
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
+
     Ok(())
 }
 
@@ -511,16 +529,18 @@ pub fn auto_generate_credit_note(
     invoice_number: String,
     remarks: Option<String>,
 ) -> Result<String, AppError> {
-    log::info!("Auto-generating credit note for cancelled invoice: {}", invoice_number);
-    
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_mut().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    log::info!(
+        "Auto-generating credit note for cancelled invoice: {}",
+        invoice_number
+    );
+
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let tx = conn.transaction().map_err(|e| AppError::Db {
@@ -529,8 +549,8 @@ pub fn auto_generate_credit_note(
     })?;
 
     // Find invoice details
-    let (customer_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status) = tx.query_row(
-        "SELECT customer_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status
+    let (customer_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status, financial_year_id) = tx.query_row(
+        "SELECT customer_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status, financial_year_id
          FROM invoices WHERE invoice_number = ?",
         [&invoice_number],
         |row| {
@@ -542,6 +562,7 @@ pub fn auto_generate_credit_note(
                 row.get::<_, f64>(4)?,
                 row.get::<_, f64>(5)?,
                 row.get::<_, String>(6)?,
+                row.get::<_, i64>(7)?,
             ))
         },
     )
@@ -590,24 +611,32 @@ pub fn auto_generate_credit_note(
         message: format!("Failed to update invoice status flag: {}", e),
     })?;
 
+    let report_repo = SqliteReportRepository;
+    report_repo.refresh_monthly_summary(&tx, financial_year_id)?;
+    report_repo.refresh_customer_summary(&tx, financial_year_id)?;
+    report_repo.refresh_supplier_summary(&tx, financial_year_id)?;
+
     tx.commit().map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
         message: format!("Failed to commit credit note transaction: {}", e),
     })?;
+
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
 
     Ok(credit_note_number)
 }
 
 #[tauri::command]
 pub fn list_credit_notes(state: State<'_, DbState>) -> Result<Vec<CreditNoteRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let mut stmt = conn

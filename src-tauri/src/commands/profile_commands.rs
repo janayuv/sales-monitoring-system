@@ -1,7 +1,7 @@
-use tauri::{AppHandle, State};
+use crate::database::connection::DbConnectionManager;
 use crate::error::AppError;
 use crate::state::DbState;
-use crate::database::connection::DbConnectionManager;
+use tauri::{AppHandle, State};
 
 #[tauri::command]
 pub fn switch_company_profile(
@@ -11,11 +11,12 @@ pub fn switch_company_profile(
     encryption_key: String,
 ) -> Result<(), AppError> {
     log::info!("Switching company profile to: {}", company_code);
-    
+
     // Acquire the connection mutex lock
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
 
     // Close any existing active connection pool
     if conn_guard.is_some() {
@@ -27,19 +28,30 @@ pub fn switch_company_profile(
     let conn = DbConnectionManager::connect(&app_handle, &company_code, &encryption_key)?;
     *conn_guard = Some(conn);
 
-    log::info!("Successfully connected and migrated database for: {}", company_code);
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
+
+    log::info!(
+        "Successfully connected and migrated database for: {}",
+        company_code
+    );
     Ok(())
 }
 
 #[tauri::command]
-pub fn close_active_profile(
-    state: State<'_, DbState>,
-) -> Result<(), AppError> {
+pub fn close_active_profile(state: State<'_, DbState>) -> Result<(), AppError> {
     log::info!("Closing active company profile");
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
 
     *conn_guard = None;
+
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
+
     Ok(())
 }

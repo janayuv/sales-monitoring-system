@@ -1,11 +1,15 @@
-use tauri::State;
-use rusqlite::params;
 use crate::error::AppError;
-use crate::state::DbState;
-use crate::models::database_models::{InvoiceRow, InvoiceItemRow, AuditLogRow, SupplierRow, CustomerRow};
+use crate::models::database_models::{
+    AuditLogRow, CustomerRow, InvoiceItemRow, InvoiceRow, SupplierRow,
+};
 use crate::models::domain_models::InvoiceSummary;
 use crate::repositories::invoice_repo::SqliteInvoiceRepository;
+use crate::repositories::report_repo::SqliteReportRepository;
 use crate::repositories::InvoiceRepository;
+use crate::repositories::ReportRepository;
+use crate::state::DbState;
+use rusqlite::params;
+use tauri::State;
 
 #[tauri::command]
 pub fn list_invoices_paginated(
@@ -14,23 +18,17 @@ pub fn list_invoices_paginated(
     cursor_no: Option<String>,
     limit: u32,
 ) -> Result<Vec<InvoiceSummary>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let repo = SqliteInvoiceRepository;
-    repo.list_invoices_paginated(
-        conn,
-        cursor_date.as_deref(),
-        cursor_no.as_deref(),
-        limit,
-    )
+    repo.list_invoices_paginated(conn, cursor_date.as_deref(), cursor_no.as_deref(), limit)
 }
 
 #[tauri::command]
@@ -38,18 +36,18 @@ pub fn get_invoice_details(
     state: State<'_, DbState>,
     invoice_number: String,
 ) -> Result<(InvoiceRow, Vec<InvoiceItemRow>), AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let repo = SqliteInvoiceRepository;
-    let header = repo.find_invoice(conn, &invoice_number)?
+    let header = repo
+        .find_invoice(conn, &invoice_number)?
         .ok_or_else(|| AppError::Validation {
             code: "ERR_DB_003".to_string(),
             message: format!("Invoice not found: {}", invoice_number),
@@ -66,16 +64,19 @@ pub fn update_invoice_status(
     status: String,
     user_name: String,
 ) -> Result<(), AppError> {
-    log::info!("Updating status of invoice {} to {}", invoice_number, status);
-    
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_mut().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    log::info!(
+        "Updating status of invoice {} to {}",
+        invoice_number,
+        status
+    );
+
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let tx = conn.transaction().map_err(|e| AppError::Db {
@@ -84,18 +85,21 @@ pub fn update_invoice_status(
     })?;
 
     let repo = SqliteInvoiceRepository;
-    let old_invoice = repo.find_invoice(&tx, &invoice_number)?
-        .ok_or_else(|| AppError::Validation {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Invoice not found: {}", invoice_number),
-        })?;
+    let old_invoice =
+        repo.find_invoice(&tx, &invoice_number)?
+            .ok_or_else(|| AppError::Validation {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Invoice not found: {}", invoice_number),
+            })?;
 
     // Check financial year locks
-    let is_locked: i32 = tx.query_row(
-        "SELECT is_locked FROM financial_years WHERE id = ?",
-        [old_invoice.financial_year_id],
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let is_locked: i32 = tx
+        .query_row(
+            "SELECT is_locked FROM financial_years WHERE id = ?",
+            [old_invoice.financial_year_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
 
     if is_locked == 1 {
         return Err(AppError::Db {
@@ -142,10 +146,19 @@ pub fn update_invoice_status(
         message: format!("Failed to write audit logs: {}", e),
     })?;
 
+    let report_repo = SqliteReportRepository;
+    report_repo.refresh_monthly_summary(&tx, old_invoice.financial_year_id)?;
+    report_repo.refresh_customer_summary(&tx, old_invoice.financial_year_id)?;
+    report_repo.refresh_supplier_summary(&tx, old_invoice.financial_year_id)?;
+
     tx.commit().map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
         message: format!("Failed to commit status change: {}", e),
     })?;
+
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
 
     Ok(())
 }
@@ -157,15 +170,14 @@ pub fn delete_invoice_record(
     user_name: String,
 ) -> Result<(), AppError> {
     log::info!("Deleting invoice record: {}", invoice_number);
-    
-    let mut conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_mut().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let tx = conn.transaction().map_err(|e| AppError::Db {
@@ -174,18 +186,21 @@ pub fn delete_invoice_record(
     })?;
 
     let repo = SqliteInvoiceRepository;
-    let old_invoice = repo.find_invoice(&tx, &invoice_number)?
-        .ok_or_else(|| AppError::Validation {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Invoice not found: {}", invoice_number),
-        })?;
+    let old_invoice =
+        repo.find_invoice(&tx, &invoice_number)?
+            .ok_or_else(|| AppError::Validation {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Invoice not found: {}", invoice_number),
+            })?;
 
     // Check financial year locks
-    let is_locked: i32 = tx.query_row(
-        "SELECT is_locked FROM financial_years WHERE id = ?",
-        [old_invoice.financial_year_id],
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let is_locked: i32 = tx
+        .query_row(
+            "SELECT is_locked FROM financial_years WHERE id = ?",
+            [old_invoice.financial_year_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
 
     if is_locked == 1 {
         return Err(AppError::Db {
@@ -195,17 +210,23 @@ pub fn delete_invoice_record(
     }
 
     // Delete items first (enforced by foreign keys cascade, but clean to run explicitly)
-    tx.execute("DELETE FROM invoice_items WHERE invoice_number = ?", [&invoice_number])
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to clear invoice line items: {}", e),
-        })?;
+    tx.execute(
+        "DELETE FROM invoice_items WHERE invoice_number = ?",
+        [&invoice_number],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to clear invoice line items: {}", e),
+    })?;
 
-    tx.execute("DELETE FROM invoices WHERE invoice_number = ?", [&invoice_number])
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to delete invoice record: {}", e),
-        })?;
+    tx.execute(
+        "DELETE FROM invoices WHERE invoice_number = ?",
+        [&invoice_number],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to delete invoice record: {}", e),
+    })?;
 
     let old_val_json = serde_json::to_string(&old_invoice).unwrap_or_default();
 
@@ -224,10 +245,19 @@ pub fn delete_invoice_record(
         message: format!("Failed to write audit logs: {}", e),
     })?;
 
+    let report_repo = SqliteReportRepository;
+    report_repo.refresh_monthly_summary(&tx, old_invoice.financial_year_id)?;
+    report_repo.refresh_customer_summary(&tx, old_invoice.financial_year_id)?;
+    report_repo.refresh_supplier_summary(&tx, old_invoice.financial_year_id)?;
+
     tx.commit().map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
         message: format!("Failed to commit delete transaction: {}", e),
     })?;
+
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
 
     Ok(())
 }
@@ -238,14 +268,13 @@ pub fn get_record_audit_logs(
     table_name: String,
     record_id: String,
 ) -> Result<Vec<AuditLogRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
-    let conn = conn_guard.as_ref().ok_or_else(|| {
-        AppError::Db {
-            code: "ERR_DB_002".to_string(),
-            message: "No active database connection profile".to_string(),
-        }
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
     let mut stmt = conn
@@ -284,13 +313,16 @@ pub fn get_record_audit_logs(
             message: format!("Failed to parse audit log row: {}", e),
         })?);
     }
-    
+
     Ok(list)
 }
 
 #[tauri::command]
 pub fn get_suppliers_list(state: State<'_, DbState>) -> Result<Vec<SupplierRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| AppError::Internal(e.to_string()))?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
@@ -303,20 +335,22 @@ pub fn get_suppliers_list(state: State<'_, DbState>) -> Result<Vec<SupplierRow>,
         message: format!("Failed to prepare query: {}", e),
     })?;
 
-    let rows = stmt.query_map([], |row| {
-        Ok(SupplierRow {
-            id: Some(row.get(0)?),
-            supplier_code: row.get(1)?,
-            supplier_name: row.get(2)?,
-            gstin: row.get(3)?,
-            state_code: row.get(4)?,
-            address: row.get(5)?,
-            status: row.get(6)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(SupplierRow {
+                id: Some(row.get(0)?),
+                supplier_code: row.get(1)?,
+                supplier_name: row.get(2)?,
+                gstin: row.get(3)?,
+                state_code: row.get(4)?,
+                address: row.get(5)?,
+                status: row.get(6)?,
+            })
         })
-    }).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to execute query: {}", e),
-    })?;
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to execute query: {}", e),
+        })?;
 
     let mut list = Vec::new();
     for r in rows {
@@ -330,7 +364,10 @@ pub fn get_suppliers_list(state: State<'_, DbState>) -> Result<Vec<SupplierRow>,
 
 #[tauri::command]
 pub fn get_customers_list(state: State<'_, DbState>) -> Result<Vec<CustomerRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| AppError::Internal(e.to_string()))?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
@@ -343,20 +380,22 @@ pub fn get_customers_list(state: State<'_, DbState>) -> Result<Vec<CustomerRow>,
         message: format!("Failed to prepare query: {}", e),
     })?;
 
-    let rows = stmt.query_map([], |row| {
-        Ok(CustomerRow {
-            id: Some(row.get(0)?),
-            customer_code: row.get(1)?,
-            customer_name: row.get(2)?,
-            gstin: row.get(3)?,
-            state_code: row.get(4)?,
-            address: row.get(5)?,
-            status: row.get(6)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(CustomerRow {
+                id: Some(row.get(0)?),
+                customer_code: row.get(1)?,
+                customer_name: row.get(2)?,
+                gstin: row.get(3)?,
+                state_code: row.get(4)?,
+                address: row.get(5)?,
+                status: row.get(6)?,
+            })
         })
-    }).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to execute query: {}", e),
-    })?;
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to execute query: {}", e),
+        })?;
 
     let mut list = Vec::new();
     for r in rows {
