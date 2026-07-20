@@ -41,7 +41,10 @@ pub struct SupplierRecovery {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../src/types/bindings/ValidationErrorDetail.ts")]
+#[ts(
+    export,
+    export_to = "../../src/types/bindings/ValidationErrorDetail.ts"
+)]
 pub struct ValidationErrorDetail {
     pub row_no: i32,
     pub invoice_no: Option<String>,
@@ -52,7 +55,10 @@ pub struct ValidationErrorDetail {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../src/types/bindings/ValidationWarningDetail.ts")]
+#[ts(
+    export,
+    export_to = "../../src/types/bindings/ValidationWarningDetail.ts"
+)]
 pub struct ValidationWarningDetail {
     pub row_no: i32,
     pub invoice_no: Option<String>,
@@ -95,6 +101,7 @@ pub struct DashboardMetrics {
     pub pending_credit_notes_count: u32,
     pub pending_debit_notes_count: u32,
     pub cancelled_invoices_count: u32,
+    pub active_invoices_count: u32,
     pub top_10_customers: Vec<(String, f64)>,
     pub top_10_suppliers: Vec<(String, f64)>,
     pub top_20_parts: Vec<(String, f64)>,

@@ -1,16 +1,16 @@
-use tauri::State;
-use rusqlite::params;
 use crate::error::AppError;
-use crate::state::DbState;
-use crate::models::domain_models::{
-    TallyExportRow, DashboardMetrics, GstSummaryBreakdown,
-};
 use crate::models::database_models::FinancialYearRow;
-use crate::services::export_service::{Exporter, TallyExcelExporter, StandardExcelExporter, CsvExporter};
+use crate::models::domain_models::{DashboardMetrics, GstSummaryBreakdown, TallyExportRow};
+use crate::services::export_service::{
+    CsvExporter, Exporter, StandardExcelExporter, TallyExcelExporter,
+};
+use crate::state::DbState;
+use rusqlite::params;
+use tauri::State;
 
 // ======================== Report Data Models ========================
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Summary for the monthly sales report widget
@@ -73,9 +73,10 @@ pub fn query_tally_export_rows(
     date_to: String,
     status_filter: Option<String>,
 ) -> Result<Vec<TallyExportRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
@@ -188,13 +189,20 @@ pub fn export_tally_excel(
     let exporter = TallyExcelExporter;
     let row_count = exporter.export(&rows, &output_path)?;
 
-    log::info!("Tally Excel export completed: {} rows → {}", row_count, output_path);
+    log::info!(
+        "Tally Excel export completed: {} rows → {}",
+        row_count,
+        output_path
+    );
 
     Ok(ExportResult {
         format: exporter.format_name().to_string(),
         output_path,
         row_count,
-        message: format!("Successfully exported {} rows with multi-rate splitting applied", row_count),
+        message: format!(
+            "Successfully exported {} rows with multi-rate splitting applied",
+            row_count
+        ),
     })
 }
 
@@ -218,7 +226,11 @@ pub fn export_standard_excel(
     let exporter = StandardExcelExporter;
     let row_count = exporter.export(&rows, &output_path)?;
 
-    log::info!("Standard Excel export completed: {} rows → {}", row_count, output_path);
+    log::info!(
+        "Standard Excel export completed: {} rows → {}",
+        row_count,
+        output_path
+    );
 
     Ok(ExportResult {
         format: exporter.format_name().to_string(),
@@ -260,39 +272,32 @@ pub fn export_csv(
 
 // ======================== Report Query Commands ========================
 
-/// Get monthly sales summary for the Report Center chart
+/// Get monthly sales summary for the Report Center chart, read from the
+/// materialized rollup table instead of scanning `invoices` live.
 #[tauri::command]
 pub fn get_monthly_sales_summary(
     state: State<'_, DbState>,
     financial_year_id: Option<i64>,
 ) -> Result<Vec<MonthlySalesRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
     })?;
 
     let fy_clause = match financial_year_id {
-        Some(id) => format!("AND i.financial_year_id = {}", id),
-        None => String::new(),
+        Some(_) => "WHERE financial_year_id = ?",
+        None => "",
     };
 
     let query = format!(
-        "SELECT
-            strftime('%Y-%m', i.invoice_date) AS month_label,
-            COALESCE(SUM(i.total_taxable), 0.0),
-            COALESCE(SUM(i.total_cgst), 0.0),
-            COALESCE(SUM(i.total_sgst), 0.0),
-            COALESCE(SUM(i.total_igst), 0.0),
-            COALESCE(SUM(i.total_value), 0.0),
-            COUNT(DISTINCT i.invoice_number)
-        FROM invoices i
-        WHERE i.status NOT IN ('Cancelled', 'Draft')
-          {}
-        GROUP BY strftime('%Y-%m', i.invoice_date)
-        ORDER BY month_label ASC",
+        "SELECT month_no, total_taxable, total_cgst, total_sgst, total_igst, total_value, active_count
+         FROM summary_monthly_sales
+         {}
+         ORDER BY month_no ASC",
         fy_clause
     );
 
@@ -301,7 +306,7 @@ pub fn get_monthly_sales_summary(
         message: format!("Failed to prepare monthly sales query: {}", e),
     })?;
 
-    let rows = stmt.query_map([], |row| {
+    let map_row = |row: &rusqlite::Row| -> rusqlite::Result<MonthlySalesRow> {
         Ok(MonthlySalesRow {
             month_label: row.get(0)?,
             total_taxable: row.get(1)?,
@@ -311,7 +316,14 @@ pub fn get_monthly_sales_summary(
             total_value: row.get(5)?,
             invoice_count: row.get(6)?,
         })
-    }).map_err(|e| AppError::Db {
+    };
+
+    let rows = if let Some(fy_id) = financial_year_id {
+        stmt.query_map(params![fy_id], map_row)
+    } else {
+        stmt.query_map([], map_row)
+    }
+    .map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
         message: format!("Failed to query monthly sales: {}", e),
     })?;
@@ -334,16 +346,18 @@ pub fn get_gst_rate_summary(
     date_from: String,
     date_to: String,
 ) -> Result<Vec<GstRateSummaryRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
     })?;
 
-    let mut stmt = conn.prepare(
-        "SELECT
+    let mut stmt = conn
+        .prepare(
+            "SELECT
             CASE
                 WHEN ii.igst_rate > 0 THEN ii.igst_rate
                 WHEN ii.cgst_rate > 0 THEN ii.cgst_rate * 2
@@ -360,26 +374,29 @@ pub fn get_gst_rate_summary(
         WHERE i.invoice_date >= ? AND i.invoice_date <= ?
           AND i.status NOT IN ('Cancelled', 'Draft')
         GROUP BY gst_rate
-        ORDER BY gst_rate ASC"
-    ).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to prepare GST rate summary query: {}", e),
-    })?;
+        ORDER BY gst_rate ASC",
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to prepare GST rate summary query: {}", e),
+        })?;
 
-    let rows = stmt.query_map(params![date_from, date_to], |row| {
-        Ok(GstRateSummaryRow {
-            gst_rate: row.get(0)?,
-            taxable_amount: row.get(1)?,
-            cgst_amount: row.get(2)?,
-            sgst_amount: row.get(3)?,
-            igst_amount: row.get(4)?,
-            total_tax: row.get(5)?,
-            invoice_count: row.get(6)?,
+    let rows = stmt
+        .query_map(params![date_from, date_to], |row| {
+            Ok(GstRateSummaryRow {
+                gst_rate: row.get(0)?,
+                taxable_amount: row.get(1)?,
+                cgst_amount: row.get(2)?,
+                sgst_amount: row.get(3)?,
+                igst_amount: row.get(4)?,
+                total_tax: row.get(5)?,
+                invoice_count: row.get(6)?,
+            })
         })
-    }).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to query GST rate summary: {}", e),
-    })?;
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to query GST rate summary: {}", e),
+        })?;
 
     let mut result = Vec::new();
     for r in rows {
@@ -400,16 +417,18 @@ pub fn get_top_customers(
     date_to: String,
     limit: u32,
 ) -> Result<Vec<RankingRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
     })?;
 
-    let mut stmt = conn.prepare(
-        "SELECT
+    let mut stmt = conn
+        .prepare(
+            "SELECT
             c.customer_code,
             c.customer_name,
             COALESCE(SUM(i.total_value), 0.0),
@@ -421,25 +440,28 @@ pub fn get_top_customers(
           AND i.status NOT IN ('Cancelled', 'Draft')
         GROUP BY c.id
         ORDER BY SUM(i.total_value) DESC
-        LIMIT ?"
-    ).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to prepare top customers query: {}", e),
-    })?;
+        LIMIT ?",
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to prepare top customers query: {}", e),
+        })?;
 
-    let rows = stmt.query_map(params![date_from, date_to, limit], |row| {
-        Ok(RankingRow {
-            rank: 0, // will be assigned below
-            code: row.get(0)?,
-            name: row.get(1)?,
-            total_value: row.get(2)?,
-            total_qty: row.get(3)?,
-            invoice_count: row.get(4)?,
+    let rows = stmt
+        .query_map(params![date_from, date_to, limit], |row| {
+            Ok(RankingRow {
+                rank: 0, // will be assigned below
+                code: row.get(0)?,
+                name: row.get(1)?,
+                total_value: row.get(2)?,
+                total_qty: row.get(3)?,
+                invoice_count: row.get(4)?,
+            })
         })
-    }).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to query top customers: {}", e),
-    })?;
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to query top customers: {}", e),
+        })?;
 
     let mut result = Vec::new();
     for (i, r) in rows.enumerate() {
@@ -462,16 +484,18 @@ pub fn get_top_items(
     date_to: String,
     limit: u32,
 ) -> Result<Vec<RankingRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
     })?;
 
-    let mut stmt = conn.prepare(
-        "SELECT
+    let mut stmt = conn
+        .prepare(
+            "SELECT
             it.part_code,
             it.part_name,
             COALESCE(SUM(ii.total_value), 0.0),
@@ -484,25 +508,28 @@ pub fn get_top_items(
           AND i.status NOT IN ('Cancelled', 'Draft')
         GROUP BY it.part_code
         ORDER BY SUM(ii.total_value) DESC
-        LIMIT ?"
-    ).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to prepare top items query: {}", e),
-    })?;
+        LIMIT ?",
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to prepare top items query: {}", e),
+        })?;
 
-    let rows = stmt.query_map(params![date_from, date_to, limit], |row| {
-        Ok(RankingRow {
-            rank: 0,
-            code: row.get(0)?,
-            name: row.get(1)?,
-            total_value: row.get(2)?,
-            total_qty: row.get(3)?,
-            invoice_count: row.get(4)?,
+    let rows = stmt
+        .query_map(params![date_from, date_to, limit], |row| {
+            Ok(RankingRow {
+                rank: 0,
+                code: row.get(0)?,
+                name: row.get(1)?,
+                total_value: row.get(2)?,
+                total_qty: row.get(3)?,
+                invoice_count: row.get(4)?,
+            })
         })
-    }).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to query top items: {}", e),
-    })?;
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to query top items: {}", e),
+        })?;
 
     let mut result = Vec::new();
     for (i, r) in rows.enumerate() {
@@ -519,15 +546,21 @@ pub fn get_top_items(
 
 // ======================== Dashboard Metrics Command ========================
 
-/// Load aggregated dashboard metrics from the database (or materialized tables).
-/// This replaces direct cache management — the frontend Zustand store handles caching.
+/// Load aggregated dashboard metrics, serving from the in-memory cache when
+/// warm and falling back to the materialized rollup tables (or, for
+/// day/month-granular figures the rollup can't serve, a live query) when cold.
 #[tauri::command]
-pub fn get_dashboard_metrics(
-    state: State<'_, DbState>,
-) -> Result<DashboardMetrics, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+pub fn get_dashboard_metrics(state: State<'_, DbState>) -> Result<DashboardMetrics, AppError> {
+    if let Ok(cache) = state.dashboard_cache.lock() {
+        if let Some(cached) = cache.as_ref() {
+            return Ok(cached.clone());
+        }
+    }
+
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
@@ -536,132 +569,161 @@ pub fn get_dashboard_metrics(
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let month_start = chrono::Local::now().format("%Y-%m-01").to_string();
 
-    // Active FY
-    let fy_start: String = conn.query_row(
-        "SELECT COALESCE(start_date, '2025-04-01') FROM financial_years WHERE is_active = 1 LIMIT 1",
-        [],
-        |row| row.get(0),
-    ).unwrap_or_else(|_| "2025-04-01".to_string());
+    // Active FY id + start date
+    let (active_fy_id, fy_start): (i64, String) = conn
+        .query_row(
+            "SELECT id, start_date FROM financial_years WHERE is_active = 1 LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or((0, "2025-04-01".to_string()));
 
-    // Today's sales
+    // Today's sales (day granularity — live query, the rollup is month-level)
     let today_sales: f64 = conn.query_row(
         "SELECT COALESCE(SUM(total_value), 0.0) FROM invoices WHERE invoice_date = ? AND status NOT IN ('Cancelled', 'Draft')",
         [&today],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    // MTD sales
+    // MTD sales (partial-month granularity — live query)
     let mtd_sales: f64 = conn.query_row(
         "SELECT COALESCE(SUM(total_value), 0.0) FROM invoices WHERE invoice_date >= ? AND invoice_date <= ? AND status NOT IN ('Cancelled', 'Draft')",
         [&month_start, &today],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    // YTD sales
+    // YTD sales (partial-year, spans a variable number of whole+partial months — live query)
     let ytd_sales: f64 = conn.query_row(
         "SELECT COALESCE(SUM(total_value), 0.0) FROM invoices WHERE invoice_date >= ? AND invoice_date <= ? AND status NOT IN ('Cancelled', 'Draft')",
         [&fy_start, &today],
         |row| row.get(0),
     ).unwrap_or(0.0);
 
-    // Pending notes counts
-    let pending_cn: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM credit_notes WHERE status IN ('Draft', 'Review')",
-        [],
+    let pending_cn: u32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM credit_notes WHERE status IN ('Draft', 'Review')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u32;
+
+    let pending_dn: u32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM debit_notes WHERE status IN ('Draft', 'Review')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u32;
+
+    let cancelled_count: u32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM invoices WHERE status = 'Cancelled' AND invoice_date >= ?",
+            [&fy_start],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u32;
+
+    let import_errors: u32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM validation_exceptions WHERE resolved = 0 AND severity = 'error'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u32;
+
+    // Active invoice count for the FY — from the monthly rollup
+    let active_invoices_count: u32 = conn.query_row(
+        "SELECT COALESCE(SUM(active_count), 0) FROM summary_monthly_sales WHERE financial_year_id = ?",
+        [active_fy_id],
         |row| row.get::<_, i64>(0),
     ).unwrap_or(0) as u32;
 
-    let pending_dn: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM debit_notes WHERE status IN ('Draft', 'Review')",
-        [],
-        |row| row.get::<_, i64>(0),
-    ).unwrap_or(0) as u32;
-
-    let cancelled_count: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM invoices WHERE status = 'Cancelled' AND invoice_date >= ?",
-        [&fy_start],
-        |row| row.get::<_, i64>(0),
-    ).unwrap_or(0) as u32;
-
-    let import_errors: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM validation_exceptions WHERE resolved = 0 AND severity = 'error'",
-        [],
-        |row| row.get::<_, i64>(0),
-    ).unwrap_or(0) as u32;
-
-    // GST payable summary for active FY
-    let gst_summary = conn.query_row(
-        "SELECT
+    // GST payable summary — from the monthly rollup instead of a live scan
+    let gst_summary = conn
+        .query_row(
+            "SELECT
             COALESCE(SUM(total_taxable), 0.0),
             COALESCE(SUM(total_cgst), 0.0),
             COALESCE(SUM(total_sgst), 0.0),
             COALESCE(SUM(total_igst), 0.0),
             COALESCE(SUM(total_value), 0.0)
-        FROM invoices
-        WHERE invoice_date >= ? AND invoice_date <= ?
-          AND status NOT IN ('Cancelled', 'Draft')",
-        [&fy_start, &today],
-        |row| {
-            Ok(GstSummaryBreakdown {
-                total_taxable: row.get(0)?,
-                total_cgst: row.get(1)?,
-                total_sgst: row.get(2)?,
-                total_igst: row.get(3)?,
-                total_gross: row.get(4)?,
-            })
-        },
-    ).unwrap_or_else(|_| GstSummaryBreakdown {
-        total_taxable: 0.0,
-        total_cgst: 0.0,
-        total_sgst: 0.0,
-        total_igst: 0.0,
-        total_gross: 0.0,
-    });
+        FROM summary_monthly_sales
+        WHERE financial_year_id = ?",
+            [active_fy_id],
+            |row| {
+                Ok(GstSummaryBreakdown {
+                    total_taxable: row.get(0)?,
+                    total_cgst: row.get(1)?,
+                    total_sgst: row.get(2)?,
+                    total_igst: row.get(3)?,
+                    total_gross: row.get(4)?,
+                })
+            },
+        )
+        .unwrap_or_else(|_| GstSummaryBreakdown {
+            total_taxable: 0.0,
+            total_cgst: 0.0,
+            total_sgst: 0.0,
+            total_igst: 0.0,
+            total_gross: 0.0,
+        });
 
-    // Top 10 customers
+    // Top 10 customers — from the customer rollup
     let top_customers = {
-        let mut stmt = conn.prepare(
-            "SELECT c.customer_name, COALESCE(SUM(i.total_value), 0.0)
-             FROM invoices i JOIN customers c ON i.customer_id = c.id
-             WHERE i.invoice_date >= ? AND i.status NOT IN ('Cancelled', 'Draft')
-             GROUP BY c.id ORDER BY SUM(i.total_value) DESC LIMIT 10"
-        ).unwrap();
-        let rows = stmt.query_map([&fy_start], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-        }).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.customer_name, scs.total_value
+             FROM summary_customer_sales scs
+             JOIN customers c ON scs.customer_id = c.id
+             WHERE scs.financial_year_id = ?
+             ORDER BY scs.total_value DESC LIMIT 10",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([active_fy_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            })
+            .unwrap();
         rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
     };
 
-    // Top 10 suppliers (by items sold via their parts)
+    // Top 10 suppliers — aggregated from the supplier/part rollup
     let top_suppliers = {
-        let mut stmt = conn.prepare(
-            "SELECT s.supplier_name, COALESCE(SUM(ii.total_value), 0.0)
-             FROM invoice_items ii
-             JOIN items it ON ii.part_code = it.part_code
-             JOIN suppliers s ON it.supplier_id = s.id
-             JOIN invoices i ON ii.invoice_number = i.invoice_number
-             WHERE i.invoice_date >= ? AND i.status NOT IN ('Cancelled', 'Draft')
-             GROUP BY s.id ORDER BY SUM(ii.total_value) DESC LIMIT 10"
-        ).unwrap();
-        let rows = stmt.query_map([&fy_start], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-        }).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.supplier_name, SUM(sss.total_value) AS supplier_total
+             FROM summary_supplier_sales sss
+             JOIN suppliers s ON sss.supplier_id = s.id
+             WHERE sss.financial_year_id = ?
+             GROUP BY s.id
+             ORDER BY supplier_total DESC LIMIT 10",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([active_fy_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            })
+            .unwrap();
         rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
     };
 
-    // Top 20 parts
+    // Top 20 parts — from the supplier/part rollup
     let top_parts = {
-        let mut stmt = conn.prepare(
-            "SELECT it.part_name, COALESCE(SUM(ii.total_value), 0.0)
-             FROM invoice_items ii
-             JOIN items it ON ii.part_code = it.part_code
-             JOIN invoices i ON ii.invoice_number = i.invoice_number
-             WHERE i.invoice_date >= ? AND i.status NOT IN ('Cancelled', 'Draft')
-             GROUP BY it.part_code ORDER BY SUM(ii.total_value) DESC LIMIT 20"
-        ).unwrap();
-        let rows = stmt.query_map([&fy_start], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-        }).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT it.part_name, SUM(sss.total_value) AS part_total
+             FROM summary_supplier_sales sss
+             JOIN items it ON sss.part_code = it.part_code
+             WHERE sss.financial_year_id = ?
+             GROUP BY sss.part_code
+             ORDER BY part_total DESC LIMIT 20",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([active_fy_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            })
+            .unwrap();
         rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
     };
 
@@ -674,10 +736,12 @@ pub fn get_dashboard_metrics(
         rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
     };
 
-    // Comparative growth (YTD this year vs last year same period)
+    // Comparative growth (YTD this year vs. the same period one year earlier)
     let growth_percent = {
-        let last_fy_start = fy_start.replace("2025", "2024").replace("2026", "2025");
-        let last_today = today.replace("2025", "2024").replace("2026", "2025");
+        let last_fy_start =
+            crate::utils::dates::shift_years(&fy_start, -1).unwrap_or_else(|| fy_start.clone());
+        let last_today =
+            crate::utils::dates::shift_years(&today, -1).unwrap_or_else(|| today.clone());
         let last_year_sales: f64 = conn.query_row(
             "SELECT COALESCE(SUM(total_value), 0.0) FROM invoices WHERE invoice_date >= ? AND invoice_date <= ? AND status NOT IN ('Cancelled', 'Draft')",
             [&last_fy_start, &last_today],
@@ -691,7 +755,7 @@ pub fn get_dashboard_metrics(
         }
     };
 
-    Ok(DashboardMetrics {
+    let metrics = DashboardMetrics {
         today_sales,
         mtd_sales,
         ytd_sales,
@@ -699,13 +763,20 @@ pub fn get_dashboard_metrics(
         pending_credit_notes_count: pending_cn,
         pending_debit_notes_count: pending_dn,
         cancelled_invoices_count: cancelled_count,
+        active_invoices_count,
         top_10_customers: top_customers,
         top_10_suppliers: top_suppliers,
         top_20_parts: top_parts,
         gst_payable_summary: gst_summary,
         import_errors_count: import_errors,
         recent_activity,
-    })
+    };
+
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = Some(metrics.clone());
+    }
+
+    Ok(metrics)
 }
 
 /// Get financial years list for the report center dropdowns
@@ -713,36 +784,41 @@ pub fn get_dashboard_metrics(
 pub fn get_financial_years_list(
     state: State<'_, DbState>,
 ) -> Result<Vec<FinancialYearRow>, AppError> {
-    let conn_guard = state.conn.lock().map_err(|e| {
-        AppError::Internal(format!("Failed to acquire connection lock: {}", e))
-    })?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
     let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
         code: "ERR_DB_002".to_string(),
         message: "No active database connection profile".to_string(),
     })?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, label, start_date, end_date, is_active, is_locked, closed_at
-         FROM financial_years ORDER BY start_date DESC"
-    ).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to prepare financial years query: {}", e),
-    })?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, label, start_date, end_date, is_active, is_locked, closed_at
+         FROM financial_years ORDER BY start_date DESC",
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to prepare financial years query: {}", e),
+        })?;
 
-    let rows = stmt.query_map([], |row| {
-        Ok(FinancialYearRow {
-            id: Some(row.get(0)?),
-            label: row.get(1)?,
-            start_date: row.get(2)?,
-            end_date: row.get(3)?,
-            is_active: row.get(4)?,
-            is_locked: row.get(5)?,
-            closed_at: row.get(6)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(FinancialYearRow {
+                id: Some(row.get(0)?),
+                label: row.get(1)?,
+                start_date: row.get(2)?,
+                end_date: row.get(3)?,
+                is_active: row.get(4)?,
+                is_locked: row.get(5)?,
+                closed_at: row.get(6)?,
+            })
         })
-    }).map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to query financial years: {}", e),
-    })?;
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to query financial years: {}", e),
+        })?;
 
     let mut result = Vec::new();
     for r in rows {
