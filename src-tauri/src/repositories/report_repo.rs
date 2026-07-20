@@ -207,20 +207,37 @@ mod tests {
             45.0,
             590.0,
         );
+        insert_invoice(
+            &conn,
+            "INV003",
+            "2025-05-20",
+            "Draft",
+            700.0,
+            63.0,
+            63.0,
+            826.0,
+        );
 
         let repo = SqliteReportRepository;
         repo.refresh_monthly_summary(&conn, 1).unwrap();
 
-        let (total_value, active_count, cancelled_count): (f64, i64, i64) = conn
+        let (total_value, invoice_count, active_count, cancelled_count): (f64, i64, i64, i64) = conn
             .query_row(
-                "SELECT total_value, active_count, cancelled_count FROM summary_monthly_sales WHERE financial_year_id = 1 AND month_no = '2025-05'",
+                "SELECT total_value, invoice_count, active_count, cancelled_count FROM summary_monthly_sales WHERE financial_year_id = 1 AND month_no = '2025-05'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
 
+        // Only the "Imported" invoice counts toward total_value/active_count;
+        // both the Cancelled and Draft invoices are excluded from the active
+        // aggregation, but all three still contribute to the raw COUNT(*).
         assert_eq!(total_value, 1180.0);
-        assert_eq!(active_count, 1);
+        assert_eq!(invoice_count, 3);
+        assert_eq!(
+            active_count, 1,
+            "Draft invoice must not be counted as active"
+        );
         assert_eq!(cancelled_count, 1);
     }
 
@@ -318,5 +335,111 @@ mod tests {
 
         assert_eq!(total_qty, 10.0);
         assert_eq!(total_value, 1180.0);
+    }
+
+    #[test]
+    fn refresh_monthly_summary_isolates_financial_years() {
+        let conn = setup_test_db();
+
+        // The migration only seeds FY id = 1; add a second FY so we can prove
+        // refreshing FY1 does not touch FY2's rows and FY2 invoices don't
+        // leak into FY1's aggregation.
+        conn.execute(
+            "INSERT INTO financial_years (id, label, start_date, end_date, is_active) VALUES (2, 'FY2026-27', '2026-04-01', '2027-03-31', 0)",
+            [],
+        )
+        .unwrap();
+
+        // Active invoice in FY1 via the shared helper (hardcodes financial_year_id = 1).
+        insert_invoice(
+            &conn,
+            "INV001",
+            "2025-05-10",
+            "Imported",
+            1000.0,
+            90.0,
+            90.0,
+            1180.0,
+        );
+
+        // Active invoice in FY2, inserted inline since insert_invoice hardcodes FY1.
+        conn.execute(
+            "INSERT INTO invoices (invoice_number, invoice_date, customer_id, financial_year_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status)
+             VALUES ('INV002', '2026-05-10', 1, 2, 2000.0, 180.0, 180.0, 0.0, 2360.0, 'Imported')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value, cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value)
+             VALUES ('INV002', 'P01', 10.0, 200.0, 2000.0, 9.0, 180.0, 9.0, 180.0, 0.0, 0.0, 2360.0)",
+            [],
+        )
+        .unwrap();
+
+        let repo = SqliteReportRepository;
+        repo.refresh_monthly_summary(&conn, 1).unwrap();
+
+        let fy1_row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM summary_monthly_sales WHERE financial_year_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let fy2_row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM summary_monthly_sales WHERE financial_year_id = 2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(fy1_row_count, 1, "FY1 refresh should produce its own row");
+        assert_eq!(
+            fy2_row_count, 0,
+            "refreshing FY1 must not create or leak rows for FY2"
+        );
+    }
+
+    #[test]
+    fn refresh_supplier_summary_excludes_items_with_null_supplier() {
+        let conn = setup_test_db();
+
+        // Item with no supplier assigned.
+        conn.execute(
+            "INSERT INTO items (part_code, part_name, hsn_code, uom_code, default_gst_rate, supplier_id, status) VALUES ('P_NULL', 'No Supplier Part', '8708.99.00', 'PCS', 18.0, NULL, 'Approved')",
+            [],
+        )
+        .unwrap();
+
+        // Active invoice whose only line item uses the NULL-supplier part.
+        conn.execute(
+            "INSERT INTO invoices (invoice_number, invoice_date, customer_id, financial_year_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status)
+             VALUES ('INV_NULL', '2025-05-10', 1, 1, 1000.0, 90.0, 90.0, 0.0, 1180.0, 'Imported')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value, cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value)
+             VALUES ('INV_NULL', 'P_NULL', 10.0, 100.0, 1000.0, 9.0, 90.0, 9.0, 90.0, 0.0, 0.0, 1180.0)",
+            [],
+        )
+        .unwrap();
+
+        let repo = SqliteReportRepository;
+        repo.refresh_supplier_summary(&conn, 1).unwrap();
+
+        let null_supplier_row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM summary_supplier_sales WHERE part_code = 'P_NULL'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(
+            null_supplier_row_count, 0,
+            "items with a NULL supplier_id must be excluded from the supplier rollup"
+        );
     }
 }
