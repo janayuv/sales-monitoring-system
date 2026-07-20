@@ -409,6 +409,10 @@ pub fn generate_debit_note(
         message: format!("Failed to commit debit note generation: {}", e),
     })?;
 
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
+
     Ok(())
 }
 
