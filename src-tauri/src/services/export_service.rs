@@ -424,6 +424,157 @@ impl Exporter for CsvExporter {
     }
 }
 
+/// PDF Exporter — produces a print-layout PDF report of the export rows.
+///
+/// Unlike the Tally/Standard Excel/CSV exporters (full-fidelity data
+/// interchange formats), this is a condensed human-readable report: it
+/// keeps only the columns a reviewer reads on a printed page.
+pub struct PdfExporter;
+
+const PDF_ROWS_PER_PAGE: usize = 40;
+
+impl PdfExporter {
+    fn truncate(value: &str, max_chars: usize) -> String {
+        if value.chars().count() <= max_chars {
+            value.to_string()
+        } else {
+            let mut s: String = value.chars().take(max_chars.saturating_sub(1)).collect();
+            s.push('…');
+            s
+        }
+    }
+
+    fn header_line() -> String {
+        format!(
+            "{:<12} {:<9} {:<11} {:<10} {:>8} {:>10} {:>9} {:>9} {:>9} {:>10} {:<4} {:>6}",
+            "Inv No",
+            "Cust Code",
+            "Inv Date",
+            "Part Code",
+            "Qty",
+            "BasPrice",
+            "CGST",
+            "SGST",
+            "IGST",
+            "InvVal",
+            "IGST",
+            "Rate%"
+        )
+    }
+
+    fn format_row(row: &TallyExportRow) -> String {
+        format!(
+            "{:<12} {:<9} {:<11} {:<10} {:>8.2} {:>10.2} {:>9.2} {:>9.2} {:>9.2} {:>10.2} {:<4} {:>6.2}",
+            Self::truncate(&row.inv_no, 12),
+            Self::truncate(&row.cust_code, 9),
+            row.inv_date,
+            Self::truncate(&row.part_code, 10),
+            row.qty,
+            row.bas_price,
+            row.cgst,
+            row.sgst,
+            row.igst,
+            row.inv_val,
+            row.igst_yes_no,
+            row.percentage,
+        )
+    }
+
+    fn build_page(
+        rows: &[&TallyExportRow],
+        page_num: usize,
+        total_pages: usize,
+    ) -> printpdf::PdfPage {
+        use printpdf::*;
+
+        let mut ops = vec![
+            Op::StartTextSection,
+            Op::SetTextCursor {
+                pos: Point::new(Mm(10.0), Mm(195.0)),
+            },
+            Op::SetFillColor {
+                col: Color::Rgb(Rgb {
+                    r: 0.1,
+                    g: 0.1,
+                    b: 0.1,
+                    icc_profile: None,
+                }),
+            },
+            Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                size: Pt(12.0),
+            },
+            Op::SetLineHeight { lh: Pt(16.0) },
+            Op::ShowText {
+                items: vec![TextItem::Text(format!(
+                    "Sales Export Report — Page {} of {}",
+                    page_num, total_pages
+                ))],
+            },
+            Op::AddLineBreak,
+            Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::CourierBold),
+                size: Pt(8.0),
+            },
+            Op::SetLineHeight { lh: Pt(11.0) },
+            Op::ShowText {
+                items: vec![TextItem::Text(Self::header_line())],
+            },
+            Op::AddLineBreak,
+            Op::SetFont {
+                font: PdfFontHandle::Builtin(BuiltinFont::Courier),
+                size: Pt(8.0),
+            },
+        ];
+
+        for row in rows {
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text(Self::format_row(row))],
+            });
+            ops.push(Op::AddLineBreak);
+        }
+
+        ops.push(Op::EndTextSection);
+        PdfPage::new(Mm(297.0), Mm(210.0), ops)
+    }
+}
+
+impl Exporter for PdfExporter {
+    fn format_name(&self) -> &str {
+        "PDF"
+    }
+
+    fn export(&self, data: &[TallyExportRow], output_path: &str) -> Result<u32, AppError> {
+        use printpdf::{PdfDocument, PdfSaveOptions};
+
+        let row_count = data.len() as u32;
+        let row_refs: Vec<&TallyExportRow> = data.iter().collect();
+        let total_pages = row_refs.chunks(PDF_ROWS_PER_PAGE).len().max(1);
+
+        let pages: Vec<_> = if row_refs.is_empty() {
+            vec![Self::build_page(&[], 1, 1)]
+        } else {
+            row_refs
+                .chunks(PDF_ROWS_PER_PAGE)
+                .enumerate()
+                .map(|(idx, chunk)| Self::build_page(chunk, idx + 1, total_pages))
+                .collect()
+        };
+
+        let mut doc = PdfDocument::new("Sales Export Report");
+        let pdf_bytes = doc
+            .with_pages(pages)
+            .save(&PdfSaveOptions::default(), &mut Vec::new());
+
+        std::fs::write(output_path, pdf_bytes).map_err(|e| AppError::Export {
+            code: "ERR_TALLY_002".to_string(),
+            message: format!("Failed to write PDF export file: {}", e),
+        })?;
+
+        Ok(row_count)
+    }
+}
+
 // ======================== Unit Tests ========================
 
 #[cfg(test)]
@@ -531,5 +682,45 @@ mod tests {
 
         // INV002 has single rate, no suffix
         assert_eq!(result[2].inv_no, "INV002");
+    }
+
+    #[test]
+    fn test_pdf_exporter_writes_file_with_all_rows() {
+        let rows = vec![
+            make_row("PDF001", "P01", 18.0, 1000.0),
+            make_row("PDF002", "P02", 0.0, 500.0),
+        ];
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("test_pdf_export_{}.pdf", std::process::id()));
+        let path_str = path.to_str().unwrap();
+
+        let exporter = PdfExporter;
+        let row_count = exporter
+            .export(&rows, path_str)
+            .expect("PDF export should succeed");
+
+        assert_eq!(row_count, 2);
+        let metadata = std::fs::metadata(path_str).expect("PDF file should exist");
+        assert!(metadata.len() > 0, "PDF file should not be empty");
+
+        std::fs::remove_file(path_str).ok();
+    }
+
+    #[test]
+    fn test_pdf_exporter_paginates_large_row_sets() {
+        let rows: Vec<TallyExportRow> = (0..95)
+            .map(|i| make_row(&format!("INV{:04}", i), "P01", 18.0, 100.0))
+            .collect();
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("test_pdf_paginate_{}.pdf", std::process::id()));
+        let path_str = path.to_str().unwrap();
+
+        let exporter = PdfExporter;
+        let row_count = exporter
+            .export(&rows, path_str)
+            .expect("PDF export should succeed");
+
+        assert_eq!(row_count, 95);
+        std::fs::remove_file(path_str).ok();
     }
 }

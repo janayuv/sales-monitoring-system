@@ -1,14 +1,14 @@
 // lib.rs
 // Core entry point for the Tauri backend application
 
-pub mod error;
+pub mod commands;
 pub mod config;
-pub mod state;
-pub mod models;
 pub mod database;
+pub mod error;
+pub mod models;
 pub mod repositories;
 pub mod services;
-pub mod commands;
+pub mod state;
 pub mod utils;
 
 use state::DbState;
@@ -54,6 +54,7 @@ pub fn run() {
             commands::export_commands::export_tally_excel,
             commands::export_commands::export_standard_excel,
             commands::export_commands::export_csv,
+            commands::export_commands::export_pdf,
             commands::export_commands::get_monthly_sales_summary,
             commands::export_commands::get_gst_rate_summary,
             commands::export_commands::get_top_customers,

@@ -277,6 +277,21 @@ export class ApiService {
   }
 
   /**
+   * Export invoices to a print-layout PDF report.
+   */
+  static async exportPdf(
+    dateFrom: string,
+    dateTo: string,
+    outputPath: string
+  ): Promise<ExportResult> {
+    return await invoke<ExportResult>("export_pdf", {
+      dateFrom,
+      dateTo,
+      outputPath,
+    });
+  }
+
+  /**
    * Get monthly sales summary for charts.
    */
   static async getMonthlySalesSummary(

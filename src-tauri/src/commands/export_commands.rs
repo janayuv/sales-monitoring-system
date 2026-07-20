@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::models::database_models::FinancialYearRow;
 use crate::models::domain_models::{DashboardMetrics, GstSummaryBreakdown, TallyExportRow};
 use crate::services::export_service::{
-    CsvExporter, Exporter, StandardExcelExporter, TallyExcelExporter,
+    CsvExporter, Exporter, PdfExporter, StandardExcelExporter, TallyExcelExporter,
 };
 use crate::state::DbState;
 use rusqlite::params;
@@ -267,6 +267,36 @@ pub fn export_csv(
         output_path,
         row_count,
         message: format!("Successfully exported {} rows", row_count),
+    })
+}
+
+/// Export invoices to a print-layout PDF report
+#[tauri::command]
+pub fn export_pdf(
+    state: State<'_, DbState>,
+    date_from: String,
+    date_to: String,
+    output_path: String,
+) -> Result<ExportResult, AppError> {
+    let rows = query_tally_export_rows(state, date_from, date_to, None)?;
+
+    if rows.is_empty() {
+        return Err(AppError::Export {
+            code: "ERR_TALLY_001".to_string(),
+            message: "No invoice data found for the selected date range".to_string(),
+        });
+    }
+
+    let exporter = PdfExporter;
+    let row_count = exporter.export(&rows, &output_path)?;
+
+    log::info!("PDF export completed: {} rows → {}", row_count, output_path);
+
+    Ok(ExportResult {
+        format: exporter.format_name().to_string(),
+        output_path,
+        row_count,
+        message: format!("Successfully exported {} rows to PDF", row_count),
     })
 }
 
