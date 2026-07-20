@@ -1,0 +1,66 @@
+// lib.rs
+// Core entry point for the Tauri backend application
+
+pub mod error;
+pub mod config;
+pub mod state;
+pub mod models;
+pub mod database;
+pub mod repositories;
+pub mod services;
+pub mod commands;
+pub mod utils;
+
+use state::DbState;
+
+#[tauri::command]
+fn greet(name: &str) -> String {
+    format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_log::Builder::default().build())
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .manage(DbState::new())
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::profile_commands::switch_company_profile,
+            commands::profile_commands::close_active_profile,
+            commands::import_commands::get_import_templates,
+            commands::import_commands::preview_import_file,
+            commands::import_commands::commit_import_batch,
+            commands::invoice_commands::list_invoices_paginated,
+            commands::invoice_commands::get_invoice_details,
+            commands::invoice_commands::update_invoice_status,
+            commands::invoice_commands::delete_invoice_record,
+            commands::invoice_commands::get_record_audit_logs,
+            commands::invoice_commands::get_suppliers_list,
+            commands::invoice_commands::get_customers_list,
+            commands::revision_commands::create_price_revision,
+            commands::revision_commands::get_price_revisions,
+            commands::revision_commands::preview_revision_recovery,
+            commands::revision_commands::generate_debit_note,
+            commands::revision_commands::list_debit_notes,
+            commands::revision_commands::approve_debit_note,
+            commands::revision_commands::auto_generate_credit_note,
+            commands::revision_commands::list_credit_notes,
+            // Phase 5: Exporters & Report Center
+            commands::export_commands::query_tally_export_rows,
+            commands::export_commands::export_tally_excel,
+            commands::export_commands::export_standard_excel,
+            commands::export_commands::export_csv,
+            commands::export_commands::get_monthly_sales_summary,
+            commands::export_commands::get_gst_rate_summary,
+            commands::export_commands::get_top_customers,
+            commands::export_commands::get_top_items,
+            commands::export_commands::get_dashboard_metrics,
+            commands::export_commands::get_financial_years_list,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
