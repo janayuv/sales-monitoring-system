@@ -22,8 +22,7 @@ import {
   ShieldCheck,
   Tag,
   Download,
-  BarChart3,
-  PieChart
+  BarChart3
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { ImportPreview } from "./types/bindings/ImportPreview";
@@ -43,6 +42,7 @@ import { RankingRow } from "./types/bindings/RankingRow";
 import { ExportResult } from "./types/bindings/ExportResult";
 import { DashboardMetrics } from "./types/bindings/DashboardMetrics";
 import { FinancialYearRow } from "./types/bindings/FinancialYearRow";
+import DashboardKpis from "./components/DashboardKpis";
 
 function App() {
   // Navigation & Core States
@@ -687,44 +687,7 @@ function App() {
                 </div>
               )}
 
-              {/* KPI Summary Grid */}
-              <div className="grid grid-cols-4 gap-6">
-                <div className="bg-slate-900 border border-slate-800/80 rounded-xl p-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full translate-x-12 -translate-y-12 blur-xl" />
-                  <p className="text-xs font-semibold text-slate-400">Total Sales (YTD)</p>
-                  <h3 className="text-2xl font-bold text-slate-100 mt-2">₹0.00</h3>
-                  <div className="flex items-center gap-1.5 text-slate-400 text-xs mt-3">
-                    <span className="text-emerald-400 font-semibold">0% Growth</span> vs last FY
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800/80 rounded-xl p-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full translate-x-12 -translate-y-12 blur-xl" />
-                  <p className="text-xs font-semibold text-slate-400">Sales Invoices</p>
-                  <h3 className="text-2xl font-bold text-slate-100 mt-2">0</h3>
-                  <div className="flex items-center gap-1.5 text-slate-400 text-xs mt-3">
-                    <span className="text-emerald-400 font-semibold">0 lines</span> imported
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800/80 rounded-xl p-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full translate-x-12 -translate-y-12 blur-xl" />
-                  <p className="text-xs font-semibold text-slate-400">Debit Notes Issued</p>
-                  <h3 className="text-2xl font-bold text-slate-100 mt-2">0</h3>
-                  <div className="flex items-center gap-1.5 text-slate-400 text-xs mt-3">
-                    <span className="text-amber-400 font-semibold">0 pending approvals</span>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800/80 rounded-xl p-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/5 rounded-full translate-x-12 -translate-y-12 blur-xl" />
-                  <p className="text-xs font-semibold text-slate-400">Credit Notes Issued</p>
-                  <h3 className="text-2xl font-bold text-slate-100 mt-2">0</h3>
-                  <div className="flex items-center gap-1.5 text-slate-400 text-xs mt-3">
-                    <span className="text-rose-400 font-semibold">0 processed notes</span>
-                  </div>
-                </div>
-              </div>
+              <DashboardKpis metrics={dashboardMetrics} />
             </div>
           )}
 
