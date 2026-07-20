@@ -5,11 +5,7 @@ use crate::models::domain_models::TallyExportRow;
 /// Concrete implementations produce different output formats (Excel, CSV, etc.).
 pub trait Exporter: Send + Sync {
     fn format_name(&self) -> &str;
-    fn export(
-        &self,
-        data: &[TallyExportRow],
-        output_path: &str,
-    ) -> Result<u32, AppError>;
+    fn export(&self, data: &[TallyExportRow], output_path: &str) -> Result<u32, AppError>;
 }
 
 /// Tally Excel Exporter — produces split multi-rate Excel templates.
@@ -43,10 +39,14 @@ impl TallyExcelExporter {
         let mut result: Vec<TallyExportRow> = Vec::new();
 
         for (_inv_no, inv_rows) in &invoice_groups {
-            // Sub-group by GST percentage within each invoice
-            let mut rate_groups: BTreeMap<String, Vec<&TallyExportRow>> = BTreeMap::new();
+            // Sub-group by GST percentage within each invoice. The key is the
+            // rate scaled to an integer (percentage * 100, rounded) so the
+            // BTreeMap orders rate groups numerically (0, 5, 18) rather than
+            // lexically as strings ("0.00" < "18.00" < "5.00"), which would
+            // otherwise mis-assign the A/B/C suffixes for 3+ rate invoices.
+            let mut rate_groups: BTreeMap<i64, Vec<&TallyExportRow>> = BTreeMap::new();
             for row in inv_rows {
-                let rate_key = format!("{:.2}", row.percentage);
+                let rate_key = (row.percentage * 100.0).round() as i64;
                 rate_groups.entry(rate_key).or_default().push(row);
             }
 
@@ -104,22 +104,20 @@ impl Exporter for TallyExcelExporter {
         "Tally Excel"
     }
 
-    fn export(
-        &self,
-        data: &[TallyExportRow],
-        output_path: &str,
-    ) -> Result<u32, AppError> {
-        use rust_xlsxwriter::{Workbook, Format, Color, FormatAlign, FormatBorder};
+    fn export(&self, data: &[TallyExportRow], output_path: &str) -> Result<u32, AppError> {
+        use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook};
 
         let split_rows = Self::split_multi_rate(data);
         let row_count = split_rows.len() as u32;
 
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
-        worksheet.set_name("Tally Import").map_err(|e| AppError::Export {
-            code: "ERR_TALLY_001".to_string(),
-            message: format!("Failed to set worksheet name: {}", e),
-        })?;
+        worksheet
+            .set_name("Tally Import")
+            .map_err(|e| AppError::Export {
+                code: "ERR_TALLY_001".to_string(),
+                message: format!("Failed to set worksheet name: {}", e),
+            })?;
 
         // Header format
         let header_fmt = Format::new()
@@ -142,14 +140,29 @@ impl Exporter for TallyExcelExporter {
 
         // Write headers
         let headers = [
-            "Cust Code", "Cust Name", "Inv Date", "Re Type", "Inv No",
-            "Part Code", "Part Name", "Tariff", "Qty", "Bas Price",
-            "Ass Val", "CGST", "SGST", "IGST", "Amot",
-            "Inv Val", "IGST Yes/No", "Percentage",
+            "Cust Code",
+            "Cust Name",
+            "Inv Date",
+            "Re Type",
+            "Inv No",
+            "Part Code",
+            "Part Name",
+            "Tariff",
+            "Qty",
+            "Bas Price",
+            "Ass Val",
+            "CGST",
+            "SGST",
+            "IGST",
+            "Amot",
+            "Inv Val",
+            "IGST Yes/No",
+            "Percentage",
         ];
 
         for (col, header) in headers.iter().enumerate() {
-            worksheet.write_string_with_format(0, col as u16, *header, &header_fmt)
+            worksheet
+                .write_string_with_format(0, col as u16, *header, &header_fmt)
                 .map_err(|e| AppError::Export {
                     code: "ERR_TALLY_001".to_string(),
                     message: format!("Failed to write header: {}", e),
@@ -158,10 +171,8 @@ impl Exporter for TallyExcelExporter {
 
         // Set column widths
         let widths: [f64; 18] = [
-            12.0, 30.0, 12.0, 10.0, 16.0,
-            16.0, 30.0, 14.0, 10.0, 12.0,
-            14.0, 12.0, 12.0, 12.0, 14.0,
-            14.0, 10.0, 10.0,
+            12.0, 30.0, 12.0, 10.0, 16.0, 16.0, 30.0, 14.0, 10.0, 12.0, 14.0, 12.0, 12.0, 12.0,
+            14.0, 14.0, 10.0, 10.0,
         ];
         for (col, w) in widths.iter().enumerate() {
             worksheet.set_column_width(col as u16, *w).ok();
@@ -170,24 +181,60 @@ impl Exporter for TallyExcelExporter {
         // Write data rows
         for (r, row) in split_rows.iter().enumerate() {
             let excel_row = (r + 1) as u32;
-            worksheet.write_string_with_format(excel_row, 0, &row.cust_code, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 1, &row.cust_name, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 2, &row.inv_date, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 3, &row.re_type, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 4, &row.inv_no, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 5, &row.part_code, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 6, &row.part_name, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 7, &row.tariff, &data_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 8, row.qty, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 9, row.bas_price, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 10, row.ass_val, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 11, row.cgst, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 12, row.sgst, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 13, row.igst, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 14, row.amot, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 15, row.inv_val, &number_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 16, &row.igst_yes_no, &data_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 17, row.percentage, &number_fmt).ok();
+            worksheet
+                .write_string_with_format(excel_row, 0, &row.cust_code, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 1, &row.cust_name, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 2, &row.inv_date, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 3, &row.re_type, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 4, &row.inv_no, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 5, &row.part_code, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 6, &row.part_name, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 7, &row.tariff, &data_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 8, row.qty, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 9, row.bas_price, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 10, row.ass_val, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 11, row.cgst, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 12, row.sgst, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 13, row.igst, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 14, row.amot, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 15, row.inv_val, &number_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 16, &row.igst_yes_no, &data_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 17, row.percentage, &number_fmt)
+                .ok();
         }
 
         workbook.save(output_path).map_err(|e| AppError::Export {
@@ -207,21 +254,19 @@ impl Exporter for StandardExcelExporter {
         "Standard Excel"
     }
 
-    fn export(
-        &self,
-        data: &[TallyExportRow],
-        output_path: &str,
-    ) -> Result<u32, AppError> {
-        use rust_xlsxwriter::{Workbook, Format, Color, FormatAlign, FormatBorder};
+    fn export(&self, data: &[TallyExportRow], output_path: &str) -> Result<u32, AppError> {
+        use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook};
 
         let row_count = data.len() as u32;
 
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
-        worksheet.set_name("Sales Data").map_err(|e| AppError::Export {
-            code: "ERR_TALLY_001".to_string(),
-            message: format!("Failed to set worksheet name: {}", e),
-        })?;
+        worksheet
+            .set_name("Sales Data")
+            .map_err(|e| AppError::Export {
+                code: "ERR_TALLY_001".to_string(),
+                message: format!("Failed to set worksheet name: {}", e),
+            })?;
 
         let header_fmt = Format::new()
             .set_bold()
@@ -241,21 +286,35 @@ impl Exporter for StandardExcelExporter {
             .set_border(FormatBorder::Thin);
 
         let headers = [
-            "Cust Code", "Cust Name", "Inv Date", "Re Type", "Inv No",
-            "Part Code", "Part Name", "Tariff", "Qty", "Bas Price",
-            "Ass Val", "CGST", "SGST", "IGST", "Amot",
-            "Inv Val", "IGST Yes/No", "Percentage",
+            "Cust Code",
+            "Cust Name",
+            "Inv Date",
+            "Re Type",
+            "Inv No",
+            "Part Code",
+            "Part Name",
+            "Tariff",
+            "Qty",
+            "Bas Price",
+            "Ass Val",
+            "CGST",
+            "SGST",
+            "IGST",
+            "Amot",
+            "Inv Val",
+            "IGST Yes/No",
+            "Percentage",
         ];
 
         for (col, header) in headers.iter().enumerate() {
-            worksheet.write_string_with_format(0, col as u16, *header, &header_fmt).ok();
+            worksheet
+                .write_string_with_format(0, col as u16, *header, &header_fmt)
+                .ok();
         }
 
         let widths: [f64; 18] = [
-            12.0, 30.0, 12.0, 10.0, 16.0,
-            16.0, 30.0, 14.0, 10.0, 12.0,
-            14.0, 12.0, 12.0, 12.0, 14.0,
-            14.0, 10.0, 10.0,
+            12.0, 30.0, 12.0, 10.0, 16.0, 16.0, 30.0, 14.0, 10.0, 12.0, 14.0, 12.0, 12.0, 12.0,
+            14.0, 14.0, 10.0, 10.0,
         ];
         for (col, w) in widths.iter().enumerate() {
             worksheet.set_column_width(col as u16, *w).ok();
@@ -263,24 +322,60 @@ impl Exporter for StandardExcelExporter {
 
         for (r, row) in data.iter().enumerate() {
             let excel_row = (r + 1) as u32;
-            worksheet.write_string_with_format(excel_row, 0, &row.cust_code, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 1, &row.cust_name, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 2, &row.inv_date, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 3, &row.re_type, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 4, &row.inv_no, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 5, &row.part_code, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 6, &row.part_name, &data_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 7, &row.tariff, &data_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 8, row.qty, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 9, row.bas_price, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 10, row.ass_val, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 11, row.cgst, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 12, row.sgst, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 13, row.igst, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 14, row.amot, &number_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 15, row.inv_val, &number_fmt).ok();
-            worksheet.write_string_with_format(excel_row, 16, &row.igst_yes_no, &data_fmt).ok();
-            worksheet.write_number_with_format(excel_row, 17, row.percentage, &number_fmt).ok();
+            worksheet
+                .write_string_with_format(excel_row, 0, &row.cust_code, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 1, &row.cust_name, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 2, &row.inv_date, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 3, &row.re_type, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 4, &row.inv_no, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 5, &row.part_code, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 6, &row.part_name, &data_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 7, &row.tariff, &data_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 8, row.qty, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 9, row.bas_price, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 10, row.ass_val, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 11, row.cgst, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 12, row.sgst, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 13, row.igst, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 14, row.amot, &number_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 15, row.inv_val, &number_fmt)
+                .ok();
+            worksheet
+                .write_string_with_format(excel_row, 16, &row.igst_yes_no, &data_fmt)
+                .ok();
+            worksheet
+                .write_number_with_format(excel_row, 17, row.percentage, &number_fmt)
+                .ok();
         }
 
         workbook.save(output_path).map_err(|e| AppError::Export {
@@ -300,11 +395,7 @@ impl Exporter for CsvExporter {
         "CSV"
     }
 
-    fn export(
-        &self,
-        data: &[TallyExportRow],
-        output_path: &str,
-    ) -> Result<u32, AppError> {
+    fn export(&self, data: &[TallyExportRow], output_path: &str) -> Result<u32, AppError> {
         use std::io::Write;
 
         let row_count = data.len() as u32;
@@ -352,8 +443,16 @@ mod tests {
             qty: 10.0,
             bas_price: ass_val / 10.0,
             ass_val,
-            cgst: if percentage > 0.0 { ass_val * percentage / 200.0 } else { 0.0 },
-            sgst: if percentage > 0.0 { ass_val * percentage / 200.0 } else { 0.0 },
+            cgst: if percentage > 0.0 {
+                ass_val * percentage / 200.0
+            } else {
+                0.0
+            },
+            sgst: if percentage > 0.0 {
+                ass_val * percentage / 200.0
+            } else {
+                0.0
+            },
             igst: 0.0,
             amot: ass_val + (ass_val * percentage / 100.0),
             inv_val: ass_val + (ass_val * percentage / 100.0),
