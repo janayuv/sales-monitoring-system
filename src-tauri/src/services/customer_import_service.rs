@@ -80,6 +80,11 @@ pub fn parse_customer_sheet(file_path: &str) -> Result<Vec<ParsedCustomerRow>, A
             col_field.insert(idx, field);
         }
     }
+    if col_field.is_empty() {
+        return Err(AppError::Excel(
+            "No recognized customer-master columns found in the header row. Expected headers like customer_code, report_name, gstin, address1, etc.".to_string(),
+        ));
+    }
 
     let mut parsed = Vec::new();
     for (i, row) in rows_iter.enumerate() {
@@ -230,5 +235,87 @@ mod tests {
         let issues = validate_row(&row(Some("C1"), Some("Co"), Some("SHORT")), true);
         assert!(issues.iter().any(|i| i.severity == "warning"));
         assert!(!issues.iter().any(|i| i.severity == "error"));
+    }
+
+    // --- parse_customer_sheet coverage -------------------------------------
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static TEST_FILE_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Builds a unique path in the OS temp dir for a scratch .xlsx test file.
+    fn unique_temp_xlsx_path(tag: &str) -> std::path::PathBuf {
+        let counter = TEST_FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let file_name = format!(
+            "customer_import_service_test_{}_{}_{}.xlsx",
+            std::process::id(),
+            tag,
+            counter
+        );
+        std::env::temp_dir().join(file_name)
+    }
+
+    /// Writes a minimal single-sheet workbook with `header` as row 1 and
+    /// `data_rows` as the following rows, to `path`.
+    fn write_test_workbook(path: &std::path::Path, header: &[&str], data_rows: &[Vec<&str>]) {
+        use rust_xlsxwriter::Workbook;
+
+        let mut workbook = Workbook::new();
+        let worksheet = workbook.add_worksheet();
+
+        for (col, h) in header.iter().enumerate() {
+            worksheet
+                .write_string(0, col as u16, *h)
+                .expect("failed to write header cell in test workbook");
+        }
+        for (r, data_row) in data_rows.iter().enumerate() {
+            let excel_row = (r + 1) as u32;
+            for (col, value) in data_row.iter().enumerate() {
+                worksheet
+                    .write_string(excel_row, col as u16, *value)
+                    .expect("failed to write data cell in test workbook");
+            }
+        }
+
+        workbook
+            .save(path)
+            .expect("failed to save test workbook to temp path");
+    }
+
+    #[test]
+    fn parse_returns_error_when_no_headers_recognized() {
+        let path = unique_temp_xlsx_path("no_headers");
+        write_test_workbook(&path, &["foo", "bar", "baz"], &[vec!["v1", "v2", "v3"]]);
+
+        let result = parse_customer_sheet(path.to_str().expect("path is valid utf-8"));
+
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            result.is_err(),
+            "expected an error when no headers are recognized, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn parse_maps_headers_and_row_numbers() {
+        let path = unique_temp_xlsx_path("maps_headers");
+        write_test_workbook(
+            &path,
+            &["customer_code", "report_name", "gstin"],
+            &[vec!["C1", "Report Co", "33AAACH2364M1ZM"]],
+        );
+
+        let result = parse_customer_sheet(path.to_str().expect("path is valid utf-8"));
+
+        let _ = std::fs::remove_file(&path);
+
+        let rows = result.expect("expected parse to succeed for recognized headers");
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.code, Some("C1".to_string()));
+        assert_eq!(row.report_name, Some("Report Co".to_string()));
+        assert_eq!(row.gstin, Some("33AAACH2364M1ZM".to_string()));
+        assert_eq!(row.row_no, 2);
     }
 }
