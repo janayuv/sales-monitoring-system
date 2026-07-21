@@ -101,6 +101,35 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 CREATE INDEX IF NOT EXISTS idx_customers_code ON customers(customer_code);
             ",
         },
+        Migration {
+            version: 5,
+            description: "Rebuild import_batches to allow source_type 'customer_master'",
+            rebuild: true,
+            sql: "
+                CREATE TABLE import_batches_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    source_type TEXT NOT NULL CHECK(source_type IN ('erp_sales_report', 'gstr1_report', 'customer_master')),
+                    file_name TEXT NOT NULL,
+                    file_size_bytes INTEGER NOT NULL,
+                    excel_version TEXT,
+                    template_version_id INTEGER,
+                    file_hash TEXT NOT NULL UNIQUE,
+                    row_count INTEGER NOT NULL,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    warning_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    imported_by TEXT NOT NULL,
+                    user_remarks TEXT,
+                    rollback_reason TEXT,
+                    status TEXT NOT NULL DEFAULT 'staged' CHECK(status IN ('staged', 'completed', 'failed'))
+                );
+                INSERT INTO import_batches_new SELECT * FROM import_batches;
+                DROP TABLE import_batches;
+                ALTER TABLE import_batches_new RENAME TO import_batches;
+            ",
+        },
     ];
 
     // 4. Apply migrations sequentially
@@ -349,5 +378,28 @@ mod tests {
             fk_on, 1,
             "foreign_keys must be restored to ON after a failed rebuild"
         );
+    }
+
+    #[test]
+    fn v5_import_batches_accepts_customer_master_source() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO import_batches
+                (source_type, file_name, file_size_bytes, file_hash, row_count, imported_by, status)
+             VALUES ('customer_master', 'cm.xlsx', 10, 'hash-cm-1', 3, 'tester', 'completed')",
+            [],
+        )
+        .expect("customer_master source_type must be allowed after v5");
+
+        let cnt: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM import_batches WHERE source_type='customer_master'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cnt, 1);
     }
 }
