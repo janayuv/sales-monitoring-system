@@ -145,3 +145,36 @@ pub struct InvoiceSummary {
     pub total_value: f64,
     pub status: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerImportIssue.ts")]
+pub struct CustomerImportIssue {
+    pub row_no: i32,
+    pub customer_code: Option<String>,
+    pub severity: String, // "error" | "warning"
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(
+    export,
+    export_to = "../../src/types/bindings/CustomerImportPreview.ts"
+)]
+pub struct CustomerImportPreview {
+    pub file_name: String,
+    pub row_count: u32,
+    pub to_insert: u32,
+    pub to_update: u32,
+    pub errors: Vec<CustomerImportIssue>,
+    pub warnings: Vec<CustomerImportIssue>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerImportResult.ts")]
+pub struct CustomerImportResult {
+    pub batch_id: i64,
+    pub inserted: u32,
+    pub updated: u32,
+    pub skipped: u32,
+    pub errors: Vec<CustomerImportIssue>,
+}
