@@ -172,7 +172,10 @@ fn apply_rebuild_migration(conn: &mut Connection, migration: &Migration) -> Resu
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
                 r.get(0)
             })
-            .unwrap_or(0);
+            .map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("foreign_key_check read failed: {e}"),
+            })?;
         if violations > 0 {
             return Err(AppError::Db {
                 code: "ERR_DB_003".to_string(),
@@ -281,5 +284,70 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cnt, 1);
+    }
+
+    #[test]
+    fn rebuild_migration_rolls_back_and_restores_fk_enforcement_on_violation() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        // Set up a parent/child pair with a dangling FK reference. foreign_keys
+        // enforcement is switched OFF first so the bad insert is allowed to land
+        // (mirrors how a real rebuild leaves stray rows behind before the check
+        // runs); pragma_foreign_key_check reports violations regardless of the
+        // enforcement pragma's runtime state.
+        conn.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        conn.execute_batch(
+            "CREATE TABLE p (id INTEGER PRIMARY KEY);
+             CREATE TABLE c (pid INTEGER REFERENCES p(id));
+             INSERT INTO c (pid) VALUES (999);",
+        )
+        .unwrap();
+
+        let bogus_migration = Migration {
+            version: 9999,
+            description: "test-only rebuild probe (no-op, unrelated to the FK violation)",
+            sql: "CREATE TABLE IF NOT EXISTS _rebuild_probe (x INTEGER);",
+            rebuild: true,
+        };
+
+        let result = apply_rebuild_migration(&mut conn, &bogus_migration);
+        assert!(
+            result.is_err(),
+            "pre-existing dangling FK should abort the rebuild via foreign_key_check"
+        );
+
+        // Rolled back: the rebuild's own DDL must not have survived the abort.
+        let probe_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_rebuild_probe'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            probe_exists, 0,
+            "_rebuild_probe must not exist after rollback"
+        );
+
+        // schema_migrations must not record the failed rebuild either.
+        let logged: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 9999",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(logged, 0, "failed rebuild must not be logged as applied");
+
+        // foreign_keys enforcement must be restored to ON afterward, regardless
+        // of the failure.
+        let fk_on: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            fk_on, 1,
+            "foreign_keys must be restored to ON after a failed rebuild"
+        );
     }
 }
