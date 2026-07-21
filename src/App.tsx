@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   FileUp,
   LayoutDashboard,
@@ -22,7 +23,9 @@ import {
   ShieldCheck,
   Tag,
   Download,
-  BarChart3
+  BarChart3,
+  PieChart,
+  Users
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { ImportPreview } from "./types/bindings/ImportPreview";
@@ -41,12 +44,14 @@ import { GstRateSummaryRow } from "./types/bindings/GstRateSummaryRow";
 import { RankingRow } from "./types/bindings/RankingRow";
 import { ExportResult } from "./types/bindings/ExportResult";
 import { DashboardMetrics } from "./types/bindings/DashboardMetrics";
-import { FinancialYearRow } from "./types/bindings/FinancialYearRow";
+import { MaintenanceResult } from "./types/bindings/MaintenanceResult";
+import { BackupStatus } from "./types/bindings/BackupStatus";
 import DashboardKpis from "./components/DashboardKpis";
+import CustomerMasterTab from "./components/CustomerMaster/CustomerMasterTab";
 
 function App() {
   // Navigation & Core States
-  const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "revisions" | "notes" | "reports" | "settings">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "revisions" | "notes" | "reports" | "settings">("dashboard");
   const [companyCode, setCompanyCode] = useState("DEMO");
   const [encryptionKey, setEncryptionKey] = useState("demo1234");
   const [isConnected, setIsConnected] = useState(false);
@@ -119,6 +124,15 @@ function App() {
   const [loadingReports, setLoadingReports] = useState(false);
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
 
+  // Maintenance & Backup & App Settings States
+  const [maintenanceResult, setMaintenanceResult] = useState<MaintenanceResult | null>(null);
+  const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
+  const [isCheckingIntegrity, setIsCheckingIntegrity] = useState(false);
+  const [isVacuuming, setIsVacuuming] = useState(false);
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [tallyRegisterCode, setTallyRegisterCode] = useState("TF");
+  const [isSavingRegisterCode, setIsSavingRegisterCode] = useState(false);
+
   // Auto-connect to DEMO profile on startup
   useEffect(() => {
     handleConnect();
@@ -138,6 +152,9 @@ function App() {
         loadMonthlySales();
       } else if (activeTab === "dashboard") {
         loadDashboardMetrics();
+      } else if (activeTab === "settings") {
+        loadBackupStatus();
+        loadTallyRegisterCode();
       }
     }
   }, [activeTab, isConnected]);
@@ -146,6 +163,7 @@ function App() {
     try {
       await ApiService.switchCompanyProfile(companyCode, encryptionKey);
       setIsConnected(true);
+      loadTallyRegisterCode();
       
       const list = await ApiService.getImportTemplates();
       setTemplates(list);
@@ -292,9 +310,105 @@ function App() {
       }
       setExportResult(result);
     } catch (err: any) {
-      alert(`Export failed: ${err.message || err}`);
+      const msg = err.message || String(err);
+      if (msg.includes("ERR_TALLY_UNMAPPED_CUSTOMERS") || msg.includes("need a Tally customer name")) {
+        if (confirm(`${msg}\n\nWould you like to open Customer Master now to set their Tally customer names?`)) {
+          setActiveTab("customer_matching");
+        }
+      } else {
+        alert(`Export failed: ${msg}`);
+      }
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  // Phase 6: Maintenance & Backup Handlers
+  const loadBackupStatus = async () => {
+    try {
+      const status = await ApiService.getBackupStatus(companyCode);
+      setBackupStatus(status);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleCheckIntegrity = async () => {
+    setIsCheckingIntegrity(true);
+    setMaintenanceResult(null);
+    try {
+      const res = await ApiService.checkDbIntegrity();
+      setMaintenanceResult(res);
+    } catch (err: any) {
+      setMaintenanceResult({
+        routine: "PRAGMA integrity_check",
+        status: "FAILED",
+        details: err.message || String(err),
+        duration_ms: 0n as any,
+      });
+    } finally {
+      setIsCheckingIntegrity(false);
+    }
+  };
+
+  const handleVacuumDb = async () => {
+    setIsVacuuming(true);
+    setMaintenanceResult(null);
+    try {
+      const res = await ApiService.vacuumDatabase();
+      setMaintenanceResult(res);
+    } catch (err: any) {
+      setMaintenanceResult({
+        routine: "VACUUM & ANALYZE",
+        status: "FAILED",
+        details: err.message || String(err),
+        duration_ms: 0n as any,
+      });
+    } finally {
+      setIsVacuuming(false);
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    const savePath = await save({
+      defaultPath: `${companyCode}_backup_${new Date().toISOString().slice(0, 10)}.bak`,
+      filters: [{ name: "Backup Files", extensions: ["bak", "db", "sql"] }],
+    });
+
+    if (!savePath) return;
+
+    setIsBackingUp(true);
+    try {
+      await ApiService.createDbBackup(companyCode, activeFY, savePath);
+      alert("Database backup completed successfully!");
+      loadBackupStatus();
+    } catch (err: any) {
+      alert(`Backup failed: ${err.message || err}`);
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const loadTallyRegisterCode = async () => {
+    try {
+      const val = await ApiService.getAppSetting("tally_register_code", "TF");
+      setTallyRegisterCode(val);
+    } catch (err) {
+      console.error("Failed to load tally register code:", err);
+    }
+  };
+
+  const handleSaveTallyRegisterCode = async () => {
+    setIsSavingRegisterCode(true);
+    try {
+      const codeToSave = tallyRegisterCode.trim().toUpperCase() || "TF";
+      await ApiService.setAppSetting("tally_register_code", codeToSave);
+      setTallyRegisterCode(codeToSave);
+      alert(`Tally Register Code saved as "${codeToSave}"!\nThis will be written in the "Re Type" column on every generated Tally row.`);
+    } catch (err: any) {
+      alert(`Failed to save register code: ${err.message || err}`);
+    } finally {
+      setIsSavingRegisterCode(false);
     }
   };
 
@@ -380,11 +494,59 @@ function App() {
         selectedInvoice.invoice_number,
         "Auto-generated Credit Note for cancelled invoice matcher"
       );
-      alert(`Auto-generated Credit Note: ${cnNo}`);
-      await handleOpenDetails(selectedInvoice.invoice_number);
-      await loadInvoices();
+      alert(`Credit Note ${cnNo} generated!`);
+      loadNotes();
+      loadInvoices();
     } catch (err: any) {
-      alert(`Credit Note Auto-generation failed: ${err.message || err}`);
+      alert(`Error generating credit note: ${err.message || err}`);
+    }
+  };
+
+  const handleExportCreditNotes = async () => {
+    if (creditNotes.length === 0) {
+      alert("No credit notes available to export.");
+      return;
+    }
+    try {
+      const selectedPath = await save({
+        defaultPath: "Credit_Notes_Register.csv",
+        filters: [{ name: "CSV Spreadsheet", extensions: ["csv"] }],
+      });
+      if (!selectedPath) return;
+
+      let csv = "Credit Note No,Invoice Reference,Date,Taxable Amount (INR),Total Refund (INR),Status\n";
+      creditNotes.forEach((cn) => {
+        csv += `"${cn.credit_note_number}","${cn.invoice_number}","${cn.credit_note_date}",${cn.total_taxable},${cn.total_value},"${cn.status}"\n`;
+      });
+
+      await writeTextFile(selectedPath, csv);
+      alert(`Credit Notes Register successfully exported to:\n${selectedPath}`);
+    } catch (err: any) {
+      alert(`Failed to export credit notes: ${err.message || err}`);
+    }
+  };
+
+  const handleExportDebitNotes = async () => {
+    if (debitNotes.length === 0) {
+      alert("No debit notes available to export.");
+      return;
+    }
+    try {
+      const selectedPath = await save({
+        defaultPath: "Debit_Notes_Register.csv",
+        filters: [{ name: "CSV Spreadsheet", extensions: ["csv"] }],
+      });
+      if (!selectedPath) return;
+
+      let csv = "Debit Note No,Supplier Reference,Date,Taxable Amount (INR),Total Recoverable (INR),Status\n";
+      debitNotes.forEach((dn) => {
+        csv += `"${dn.debit_note_number}","Supplier #${dn.supplier_id}","${dn.debit_note_date}",${dn.total_taxable},${dn.total_value},"${dn.status}"\n`;
+      });
+
+      await writeTextFile(selectedPath, csv);
+      alert(`Debit Notes Register successfully exported to:\n${selectedPath}`);
+    } catch (err: any) {
+      alert(`Failed to export debit notes: ${err.message || err}`);
     }
   };
 
@@ -457,16 +619,35 @@ function App() {
   const handleSelectFile = async () => {
     try {
       const selected = await open({
-        filters: [{ name: "Excel Sheets", extensions: ["xlsx", "xls"] }],
+        filters: [{ name: "Excel & CSV Files", extensions: ["xlsx", "xls", "csv"] }],
         multiple: false,
       });
       if (selected) {
-        setSelectedFilePath(selected as string);
+        const filePath = (Array.isArray(selected) ? selected[0] : selected) as string;
+        if (filePath) {
+          const cleanPath = filePath.trim().replace(/^"(.*)"$/, "$1");
+          setSelectedFilePath(cleanPath);
+          setPreviewData(null);
+          setImportStatus("idle");
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`File selection error: ${err.message || err}`);
+    }
+  };
+
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      const path = (file as any).path || file.name;
+      if (path) {
+        const cleanPath = path.trim().replace(/^"(.*)"$/, "$1");
+        setSelectedFilePath(cleanPath);
         setPreviewData(null);
         setImportStatus("idle");
       }
-    } catch (err) {
-      console.error(err);
     }
   };
 
@@ -558,6 +739,17 @@ function App() {
             >
               <FileSpreadsheet className="w-4 h-4" />
               Outward Registers
+            </button>
+            <button
+              onClick={() => setActiveTab("customer_matching")}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
+                activeTab === "customer_matching"
+                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
+                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              Customer Master
             </button>
             <button
               onClick={() => setActiveTab("revisions")}
@@ -831,6 +1023,8 @@ function App() {
             </div>
           )}
 
+          {activeTab === "customer_matching" && <CustomerMasterTab />}
+
           {activeTab === "revisions" && (
             <div className="grid grid-cols-3 gap-6 items-start">
               {/* Revisions list */}
@@ -969,23 +1163,41 @@ function App() {
           {activeTab === "notes" && (
             <div className="space-y-6">
               {/* Subtab Toggle */}
-              <div className="flex gap-2 border-b border-slate-800 pb-3">
-                <button
-                  onClick={() => setActiveNotesSubTab("debit")}
-                  className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-                    activeNotesSubTab === "debit" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Debit Notes (Supplier Price Recovery)
-                </button>
-                <button
-                  onClick={() => setActiveNotesSubTab("credit")}
-                  className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-                    activeNotesSubTab === "credit" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Credit Notes (Sales Cancellations)
-                </button>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setActiveNotesSubTab("debit")}
+                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                      activeNotesSubTab === "debit" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Debit Notes (Supplier Price Recovery)
+                  </button>
+                  <button
+                    onClick={() => setActiveNotesSubTab("credit")}
+                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                      activeNotesSubTab === "credit" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Credit Notes (Sales Cancellations)
+                  </button>
+                </div>
+
+                {activeNotesSubTab === "credit" ? (
+                  <button
+                    onClick={handleExportCreditNotes}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5 text-indigo-400" /> Export Credit Notes CSV
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleExportDebitNotes}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5 text-indigo-400" /> Export Debit Notes CSV
+                  </button>
+                )}
               </div>
 
               {/* Notes Register Grid */}
@@ -1090,6 +1302,29 @@ function App() {
 
           {activeTab === "import" && (
             <div className="space-y-8 max-w-5xl">
+              {/* Drag and Drop Zone */}
+              <div
+                onClick={handleSelectFile}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleFileDrop}
+                className="border-2 border-dashed border-slate-800 hover:border-indigo-500/60 bg-slate-900/60 hover:bg-indigo-950/20 rounded-xl p-8 text-center cursor-pointer transition-all duration-200 group"
+              >
+                <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+                  <FileUp className="w-6 h-6" />
+                </div>
+                <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                  Click to Browse or Drag & Drop Sales Spreadsheet
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Supports ERP outward exports in .xlsx, .xls, or .csv formats
+                </p>
+                {selectedFilePath && (
+                  <div className="mt-3 inline-block bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono text-indigo-400">
+                    Selected: {selectedFilePath}
+                  </div>
+                )}
+              </div>
+
               {/* Import Setup Card */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
                 <h3 className="text-sm font-bold text-slate-200 mb-6 uppercase tracking-wider text-indigo-400">Configure Import Job</h3>
@@ -1115,10 +1350,16 @@ function App() {
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        readOnly
-                        placeholder="Choose sales spreadsheet..."
+                        placeholder="Browse or paste file path (e.g. C:\Reports\DailySales.xlsx)..."
                         value={selectedFilePath}
-                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-400 truncate focus:outline-none"
+                        onChange={(e) => {
+                          const rawPath = e.target.value;
+                          const cleanPath = rawPath.trim().replace(/^"(.*)"$/, "$1");
+                          setSelectedFilePath(cleanPath);
+                          setPreviewData(null);
+                          setImportStatus("idle");
+                        }}
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
                       />
                       <button
                         onClick={handleSelectFile}
@@ -1216,11 +1457,41 @@ function App() {
                           <tbody className="divide-y divide-slate-800/60">
                             {previewData.errors.map((err, i) => (
                               <tr key={i} className="hover:bg-slate-900/30 text-rose-200/90">
-                                <td className="p-3">{err.row_no}</td>
-                                <td className="p-3 font-mono">{err.invoice_no || "N/A"}</td>
-                                <td className="p-3 font-semibold text-slate-400">{err.field_name}</td>
-                                <td className="p-3">{err.error_type}</td>
-                                <td className="p-3 font-mono bg-rose-500/5">{err.actual_value}</td>
+                                <td className="p-3">
+                                  {err.row_no === 0 ? (
+                                    <span className="font-semibold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded text-[11px]">
+                                      Header Row 1
+                                    </span>
+                                  ) : (
+                                    <span>Row {err.row_no}</span>
+                                  )}
+                                </td>
+                                <td className="p-3 font-mono text-slate-400">
+                                  {err.row_no === 0 ? "Header Column" : (err.invoice_no || "N/A")}
+                                </td>
+                                <td className="p-3 font-semibold text-slate-300 font-mono">{err.field_name}</td>
+                                <td className="p-3">
+                                  {err.error_type === "ERR_IMPORT_001" ? (
+                                    <span className="font-semibold text-rose-300">Missing Column Header</span>
+                                  ) : err.error_type === "ERR_IMPORT_002" ? (
+                                    <span className="font-semibold text-rose-400">Duplicate File</span>
+                                  ) : (
+                                    err.error_type
+                                  )}
+                                </td>
+                                <td className="p-3 font-mono bg-rose-500/5">
+                                  {err.error_type === "ERR_IMPORT_002" ? (
+                                    <span className="text-rose-300 font-sans text-xs font-semibold">
+                                      This file has already been imported into your database in a previous batch. Double importing identical files is blocked to prevent data duplication.
+                                    </span>
+                                  ) : err.row_no === 0 ? (
+                                    <span className="text-amber-300 font-sans text-xs">
+                                      Column for '<strong className="text-white">{err.field_name}</strong>' was not found in Row 1 of your Excel file.
+                                    </span>
+                                  ) : (
+                                    err.actual_value
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -1274,6 +1545,405 @@ function App() {
             </div>
           )}
 
+          {activeTab === "reports" && (
+            <div className="space-y-6">
+              {/* Reports Sub-Header Navigation */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setReportSubTab("export")}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                      reportSubTab === "export"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                    }`}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Tally & Data Exporter
+                  </button>
+                  <button
+                    onClick={() => setReportSubTab("monthly")}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                      reportSubTab === "monthly"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                    }`}
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    Monthly Performance
+                  </button>
+                  <button
+                    onClick={() => setReportSubTab("gst")}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                      reportSubTab === "gst"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                    }`}
+                  >
+                    <PieChart className="w-3.5 h-3.5" />
+                    GST Tax Breakdown
+                  </button>
+                  <button
+                    onClick={() => setReportSubTab("customers")}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                      reportSubTab === "customers"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                    }`}
+                  >
+                    <Building className="w-3.5 h-3.5" />
+                    Top Customers
+                  </button>
+                  <button
+                    onClick={() => setReportSubTab("items")}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                      reportSubTab === "items"
+                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                    }`}
+                  >
+                    <Tag className="w-3.5 h-3.5" />
+                    Top Part Sales
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={reportDateFrom}
+                    onChange={(e) => setReportDateFrom(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                  <span className="text-xs text-slate-500">to</span>
+                  <input
+                    type="date"
+                    value={reportDateTo}
+                    onChange={(e) => setReportDateTo(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    onClick={loadReportData}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                  >
+                    Filter
+                  </button>
+                </div>
+              </div>
+
+              {/* Sub-Tab 1: Export Generator */}
+              {reportSubTab === "export" && (
+                <div className="grid grid-cols-3 gap-6">
+                  <div className="col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">
+                        Export Format Options
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Select the destination layout format to compile outward sales invoices into downloadable files.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div
+                        onClick={() => setExportFormat("tally")}
+                        className={`cursor-pointer p-4 rounded-xl border transition-all ${
+                          exportFormat === "tally"
+                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
+                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <FileSpreadsheet className="w-6 h-6 mb-2 text-indigo-400" />
+                        <h4 className="font-bold text-xs text-slate-200">Tally Excel (Multi-Rate Split)</h4>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Splits multi-tax rate invoices into separate voucher lines (e.g. 372076 → 372076, 372076A) for seamless Tally Prime import.
+                        </p>
+                      </div>
+
+                      <div
+                        onClick={() => setExportFormat("excel")}
+                        className={`cursor-pointer p-4 rounded-xl border transition-all ${
+                          exportFormat === "excel"
+                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
+                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <FileText className="w-6 h-6 mb-2 text-emerald-400" />
+                        <h4 className="font-bold text-xs text-slate-200">Standard Flat Excel</h4>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Consolidated flat spreadsheet listing all invoice items with complete tax breakdown columns.
+                        </p>
+                      </div>
+
+                      <div
+                        onClick={() => setExportFormat("csv")}
+                        className={`cursor-pointer p-4 rounded-xl border transition-all ${
+                          exportFormat === "csv"
+                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
+                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <Download className="w-6 h-6 mb-2 text-blue-400" />
+                        <h4 className="font-bold text-xs text-slate-200">CSV Raw Stream</h4>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Ultra-fast plaintext CSV output for downstream data processing, Python pipelines, or custom ERP integration.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
+                      <div className="text-xs text-slate-400">
+                        <span>Range: </span>
+                        <span className="font-semibold text-slate-200">
+                          {reportDateFrom || "All Dates"} to {reportDateTo || "Latest"}
+                        </span>
+                      </div>
+                      <button
+                        onClick={handleExport}
+                        disabled={isExporting}
+                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs px-6 py-2.5 rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        {isExporting ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            Compiling File...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4" />
+                            Generate & Save Export File
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Export Result Notification */}
+                    {exportResult && (
+                      <div className="bg-emerald-950/20 border border-emerald-900/60 rounded-xl p-4 flex gap-4 text-emerald-200 text-xs">
+                        <CheckCircle className="w-5 h-5 flex-shrink-0 text-emerald-400 mt-0.5" />
+                        <div>
+                          <h4 className="font-bold text-slate-200">{exportResult.format} Generation Complete</h4>
+                          <p className="text-slate-400 mt-0.5">{exportResult.message}</p>
+                          <p className="font-mono text-[10px] text-emerald-400 mt-1">Saved to: {exportResult.output_path}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Rules & Export Help Card */}
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+                    <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Tally Rate-Split Export Rules</h4>
+                    <div className="space-y-3 text-xs text-slate-400 leading-relaxed">
+                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <p className="font-semibold text-slate-300 mb-1">Rule 1: Invoice Number Preservation</p>
+                        <p className="text-[11px]">The primary GST rate item group preserves the exact invoice number exported from your ERP system.</p>
+                      </div>
+                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <p className="font-semibold text-slate-300 mb-1">Rule 2: Alphabetical Suffix Allocation</p>
+                        <p className="text-[11px]">Subsequent rate groups append uppercase alphabetical labels (A, B, C...) to ensure voucher line integrity in Tally Prime.</p>
+                      </div>
+                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                        <p className="font-semibold text-slate-300 mb-1">Rule 3: Cancelled Invoice Shield</p>
+                        <p className="text-[11px]">Invoices flagged as Draft or Cancelled are automatically excluded from Tally exports.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-Tab 2: Monthly Sales Performance */}
+              {reportSubTab === "monthly" && (
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">
+                      Monthly Outward Sales Register Summary
+                    </h3>
+                    <button
+                      onClick={loadMonthlySales}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Refresh Data
+                    </button>
+                  </div>
+
+                  {loadingReports ? (
+                    <div className="p-8 text-center text-slate-400 text-xs flex justify-center items-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                      Loading monthly aggregates...
+                    </div>
+                  ) : (
+                    <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                            <th className="p-3">Month</th>
+                            <th className="p-3 text-right">Invoice Count</th>
+                            <th className="p-3 text-right">Taxable Value (₹)</th>
+                            <th className="p-3 text-right">CGST (₹)</th>
+                            <th className="p-3 text-right">SGST (₹)</th>
+                            <th className="p-3 text-right">IGST (₹)</th>
+                            <th className="p-3 text-right">Gross Total (₹)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60">
+                          {monthlySales.map((row, idx) => (
+                            <tr key={idx} className="hover:bg-slate-900/30 text-slate-300">
+                              <td className="p-3 font-semibold text-slate-200 font-mono">{row.month_label}</td>
+                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono">₹{row.total_taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.total_cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.total_sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-blue-400/90">₹{row.total_igst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono font-bold text-indigo-400">₹{row.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-Tab 3: GST Rate Breakdown */}
+              {reportSubTab === "gst" && (
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-4">
+                    GST Tax Liability Breakdown by Rate Tier
+                  </h3>
+
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                          <th className="p-3">GST Rate Tier</th>
+                          <th className="p-3 text-right">Invoices</th>
+                          <th className="p-3 text-right">Assessable Value (₹)</th>
+                          <th className="p-3 text-right">CGST (₹)</th>
+                          <th className="p-3 text-right">SGST (₹)</th>
+                          <th className="p-3 text-right">IGST (₹)</th>
+                          <th className="p-3 text-right">Total Tax (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {gstRateSummary.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="p-6 text-center text-slate-500">
+                              No GST data found for date range filter. Select dates above and click Filter.
+                            </td>
+                          </tr>
+                        ) : (
+                          gstRateSummary.map((row, idx) => (
+                            <tr key={idx} className="hover:bg-slate-900/30 text-slate-300">
+                              <td className="p-3 font-semibold text-slate-200 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                                {row.gst_rate}% GST Tier
+                              </td>
+                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono">₹{row.taxable_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.cgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.sgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-blue-400/90">₹{row.igst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono font-bold text-indigo-400">₹{row.total_tax.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-Tab 4: Top Customers */}
+              {reportSubTab === "customers" && (
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-4">
+                    Top 10 Customers Revenue Ranking
+                  </h3>
+
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                          <th className="p-3 w-16 text-center">Rank</th>
+                          <th className="p-3">Customer Code</th>
+                          <th className="p-3">Customer Name</th>
+                          <th className="p-3 text-right">Invoices Billed</th>
+                          <th className="p-3 text-right">Total Revenue (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {topCustomers.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="p-6 text-center text-slate-500">
+                              No customer revenue data for selected date range filter.
+                            </td>
+                          </tr>
+                        ) : (
+                          topCustomers.map((row) => (
+                            <tr key={row.rank} className="hover:bg-slate-900/30 text-slate-300">
+                              <td className="p-3 text-center font-bold text-indigo-400">#{row.rank}</td>
+                              <td className="p-3 font-mono font-semibold text-slate-200">{row.code}</td>
+                              <td className="p-3 text-slate-200 font-medium">{row.name}</td>
+                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono font-bold text-emerald-400">
+                                ₹{row.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-Tab 5: Top Part Numbers */}
+              {reportSubTab === "items" && (
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-4">
+                    Top Part Numbers Sales Matrix
+                  </h3>
+
+                  <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                          <th className="p-3 w-16 text-center">Rank</th>
+                          <th className="p-3">Part Code</th>
+                          <th className="p-3">Part Description</th>
+                          <th className="p-3 text-right">Quantity Sold</th>
+                          <th className="p-3 text-right">Invoices</th>
+                          <th className="p-3 text-right">Total Revenue (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {topItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-6 text-center text-slate-500">
+                              No part sales data for selected date range filter.
+                            </td>
+                          </tr>
+                        ) : (
+                          topItems.map((row) => (
+                            <tr key={row.rank} className="hover:bg-slate-900/30 text-slate-300">
+                              <td className="p-3 text-center font-bold text-indigo-400">#{row.rank}</td>
+                              <td className="p-3 font-mono font-semibold text-slate-200">{row.code}</td>
+                              <td className="p-3 text-slate-200 font-medium">{row.name}</td>
+                              <td className="p-3 text-right font-mono text-slate-400">{row.total_qty.toLocaleString()}</td>
+                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono font-bold text-emerald-400">
+                                ₹{row.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === "settings" && (
             <div className="space-y-8 max-w-3xl">
               {/* Profile setup card */}
@@ -1320,6 +1990,152 @@ function App() {
                       Connect & Authenticate Profile
                     </button>
                   )}
+                </div>
+              </div>
+
+              {/* Tally Register Code Card */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100 font-mono tracking-wide">tally_register_code</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Register code (RE) written on every generated Tally row — meaning unconfirmed upstream, kept as a constant
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <input
+                    type="text"
+                    value={tallyRegisterCode}
+                    onChange={(e) => setTallyRegisterCode(e.target.value.toUpperCase())}
+                    placeholder="TF"
+                    className="w-48 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-indigo-500 font-bold"
+                  />
+                  <button
+                    onClick={handleSaveTallyRegisterCode}
+                    disabled={isSavingRegisterCode}
+                    className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors border border-slate-700 flex items-center gap-1.5"
+                  >
+                    {isSavingRegisterCode ? "Saving..." : "Save"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Maintenance Card */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">Database File Maintenance</h3>
+                    <p className="text-xs text-slate-400 mt-1">Run SQLite integrity verification checks and storage defragmentation (VACUUM & ANALYZE).</p>
+                  </div>
+                  <ShieldCheck className="w-5 h-5 text-indigo-400" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                    <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-emerald-400" /> Integrity Verification
+                    </h4>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Scans B-Tree structures, index pages, and foreign keys using PRAGMA integrity_check to ensure file consistency.
+                    </p>
+                    <button
+                      onClick={handleCheckIntegrity}
+                      disabled={isCheckingIntegrity}
+                      className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                      {isCheckingIntegrity ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Verifying File...
+                        </>
+                      ) : (
+                        "Run PRAGMA Integrity Check"
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                    <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4 text-indigo-400" /> Storage Defragmentation
+                    </h4>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Executes VACUUM to reclaim deleted invoice storage space and updates query optimization statistics via ANALYZE.
+                    </p>
+                    <button
+                      onClick={handleVacuumDb}
+                      disabled={isVacuuming}
+                      className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                      {isVacuuming ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Optimizing DB...
+                        </>
+                      ) : (
+                        "Execute VACUUM & ANALYZE"
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {maintenanceResult && (
+                  <div className={`p-4 rounded-xl border text-xs ${
+                    maintenanceResult.status === "HEALTHY" || maintenanceResult.status === "OPTIMIZED"
+                      ? "bg-emerald-950/20 border-emerald-900/60 text-emerald-200"
+                      : "bg-rose-950/20 border-rose-900/60 text-rose-200"
+                  }`}>
+                    <div className="flex items-center justify-between font-bold text-slate-200">
+                      <span>{maintenanceResult.routine} [{maintenanceResult.status}]</span>
+                      <span className="font-mono text-[10px] text-slate-400">{maintenanceResult.duration_ms?.toString()} ms</span>
+                    </div>
+                    <p className="text-slate-400 mt-1">{maintenanceResult.details}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Backup & Recovery Card */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">Database Backup & Recovery Manager</h3>
+                    <p className="text-xs text-slate-400 mt-1">Export encrypted database backups with metadata headers for disaster recovery.</p>
+                  </div>
+                  <Download className="w-5 h-5 text-indigo-400" />
+                </div>
+
+                {backupStatus && backupStatus.is_backup_due && (
+                  <div className="bg-amber-950/20 border border-amber-900/60 rounded-xl p-4 flex gap-4 text-amber-200 text-xs">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0 text-amber-400 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold text-slate-200">Backup Recommended</h4>
+                      <p className="text-slate-400 mt-0.5">
+                        It has been {backupStatus.days_since_backup} days since your last recorded backup. Create a backup to protect your sales records.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between">
+                  <div className="text-xs text-slate-400">
+                    <p className="font-semibold text-slate-200">Active Profile: {companyCode}</p>
+                    <p className="text-[11px] mt-0.5">
+                      Last Backup: {backupStatus?.last_backup_at ? new Date(backupStatus.last_backup_at).toLocaleString() : "Never recorded"}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleCreateBackup}
+                    disabled={isBackingUp}
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    {isBackingUp ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" /> Compiling Backup...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" /> Create Instant Backup
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
