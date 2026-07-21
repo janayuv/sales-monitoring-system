@@ -19,6 +19,15 @@ import { GstRateSummaryRow } from "../types/bindings/GstRateSummaryRow";
 import { RankingRow } from "../types/bindings/RankingRow";
 import { DashboardMetrics } from "../types/bindings/DashboardMetrics";
 import { FinancialYearRow } from "../types/bindings/FinancialYearRow";
+// Phase 6: Maintenance & Backup types
+import { MaintenanceResult } from "../types/bindings/MaintenanceResult";
+import { BackupMetadata } from "../types/bindings/BackupMetadata";
+import { BackupStatus } from "../types/bindings/BackupStatus";
+import { CustomerCategoryRow } from "../types/bindings/CustomerCategoryRow";
+import { CustomerMasterRow } from "../types/bindings/CustomerMasterRow";
+
+export type { CustomerCategoryRow };
+export type { CustomerMasterRow };
 
 export class ApiService {
   /**
@@ -129,6 +138,61 @@ export class ApiService {
    */
   static async getCustomers(): Promise<CustomerRow[]> {
     return await invoke<CustomerRow[]>("get_customers_list");
+  }
+
+  /**
+   * Fetch all customers as full master records.
+   */
+  static async getCustomerMaster(): Promise<CustomerMasterRow[]> {
+    return await invoke<CustomerMasterRow[]>("get_customer_master");
+  }
+
+  /**
+   * Fetch all customer categories.
+   */
+  static async getCustomerCategories(): Promise<CustomerCategoryRow[]> {
+    return await invoke<CustomerCategoryRow[]>("get_customer_categories");
+  }
+
+  /**
+   * Create a new customer category.
+   */
+  static async createCustomerCategory(name: string, description?: string): Promise<CustomerCategoryRow> {
+    return await invoke<CustomerCategoryRow>("create_customer_category", {
+      name,
+      description: description || null,
+    });
+  }
+
+  /**
+   * Delete a customer category by ID.
+   */
+  static async deleteCustomerCategory(categoryId: number): Promise<void> {
+    await invoke("delete_customer_category", { categoryId });
+  }
+
+  /**
+   * Update a customer's Tally name and Category.
+   */
+  static async updateCustomerMapping(
+    customerId: number,
+    tallyName?: string | null,
+    categoryName?: string | null
+  ): Promise<void> {
+    await invoke("update_customer_mapping", {
+      customerId,
+      tallyName: tallyName || null,
+      categoryName: categoryName || null,
+    });
+  }
+
+  /**
+   * Bulk update customer Tally names & categories.
+   */
+  static async bulkUpdateCustomerMappings(
+    updates: { customer_id: number; tally_name?: string | null; category_name?: string | null }[]
+  ): Promise<void> {
+    await invoke("bulk_update_customer_mappings", { updates });
   }
 
   // --- Phase 4: Price Revisions & Recovery Notes ---
@@ -357,5 +421,57 @@ export class ApiService {
    */
   static async getFinancialYears(): Promise<FinancialYearRow[]> {
     return await invoke<FinancialYearRow[]>("get_financial_years_list");
+  }
+
+  // --- Phase 6: Maintenance & Backup ---
+
+  /**
+   * Run SQLite PRAGMA integrity_check.
+   */
+  static async checkDbIntegrity(): Promise<MaintenanceResult> {
+    return await invoke<MaintenanceResult>("check_db_integrity");
+  }
+
+  /**
+   * Run VACUUM & ANALYZE to defragment database storage.
+   */
+  static async vacuumDatabase(): Promise<MaintenanceResult> {
+    return await invoke<MaintenanceResult>("vacuum_database");
+  }
+
+  /**
+   * Create database backup file with metadata header.
+   */
+  static async createDbBackup(
+    companyCode: string,
+    financialYear: string,
+    outputPath: string
+  ): Promise<BackupMetadata> {
+    return await invoke<BackupMetadata>("create_db_backup", {
+      companyCode,
+      financialYear,
+      outputPath,
+    });
+  }
+
+  /**
+   * Fetch backup status & check if backup is due.
+   */
+  static async getBackupStatus(companyCode: string): Promise<BackupStatus> {
+    return await invoke<BackupStatus>("get_backup_status", { companyCode });
+  }
+
+  /**
+   * Fetch an app setting value by key.
+   */
+  static async getAppSetting(settingKey: string, defaultVal?: string): Promise<string> {
+    return await invoke<string>("get_app_setting", { settingKey, defaultVal: defaultVal || null });
+  }
+
+  /**
+   * Set an app setting value by key.
+   */
+  static async setAppSetting(settingKey: string, settingValue: string): Promise<void> {
+    await invoke("set_app_setting", { settingKey, settingValue });
   }
 }

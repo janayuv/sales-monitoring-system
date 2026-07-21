@@ -16,82 +16,92 @@ pub trait Exporter: Send + Sync {
 pub struct TallyExcelExporter;
 
 impl TallyExcelExporter {
-    /// Splits a flat list of TallyExportRow into properly labelled groups.
+    /// Merges all items of an invoice number into ONE single row for Tally Export.
     ///
-    /// For each invoice, items are grouped by GST percentage. The first group
-    /// keeps the original invoice number; subsequent groups get suffixed labels
-    /// (e.g. "372076" → "372076", "372076A", "372076B").
+    /// Merges / sums values based on invoice:
+    /// - Assessable Value (`ass_val`)
+    /// - CGST (`cgst`)
+    /// - SGST (`sgst`)
+    /// - IGST (`igst`)
+    /// - Amortization / Line Total (`amot`)
+    /// - Total Invoice Value (`inv_val`)
     ///
-    /// Within each group the rows are aggregated into one summary row per
-    /// (invoice, rate) combination.
+    /// Keeps first row's descriptive fields for the invoice number:
+    /// - `cust_code`, `cust_name`, `inv_date`, `re_type`, `inv_no`, `part_code`, `part_name`, `tariff`, `qty`, `bas_price`.
     pub fn split_multi_rate(rows: &[TallyExportRow]) -> Vec<TallyExportRow> {
-        use std::collections::BTreeMap;
+        let mut invoice_order: Vec<String> = Vec::new();
+        let mut invoice_map: std::collections::HashMap<String, Vec<&TallyExportRow>> =
+            std::collections::HashMap::new();
 
-        // Group rows by invoice number, preserving insertion order per invoice
-        let mut invoice_groups: BTreeMap<String, Vec<&TallyExportRow>> = BTreeMap::new();
         for row in rows {
-            invoice_groups
-                .entry(row.inv_no.clone())
-                .or_default()
-                .push(row);
+            if !invoice_map.contains_key(&row.inv_no) {
+                invoice_order.push(row.inv_no.clone());
+            }
+            invoice_map.entry(row.inv_no.clone()).or_default().push(row);
         }
 
         let mut result: Vec<TallyExportRow> = Vec::new();
 
-        for (_inv_no, inv_rows) in &invoice_groups {
-            // Sub-group by GST percentage within each invoice. The key is the
-            // rate scaled to an integer (percentage * 100, rounded) so the
-            // BTreeMap orders rate groups numerically (0, 5, 18) rather than
-            // lexically as strings ("0.00" < "18.00" < "5.00"), which would
-            // otherwise mis-assign the A/B/C suffixes for 3+ rate invoices.
-            let mut rate_groups: BTreeMap<i64, Vec<&TallyExportRow>> = BTreeMap::new();
-            for row in inv_rows {
-                let rate_key = (row.percentage * 100.0).round() as i64;
-                rate_groups.entry(rate_key).or_default().push(row);
-            }
+        for inv_no in &invoice_order {
+            if let Some(group_rows) = invoice_map.get(inv_no) {
+                if group_rows.is_empty() {
+                    continue;
+                }
 
-            // Assign labels: first rate keeps original number, rest get A, B, C...
-            let suffix_chars: Vec<char> = ('A'..='Z').collect();
-            let mut suffix_idx: usize = 0;
+                let first = group_rows[0];
 
-            for (group_idx, (_rate_key, group_rows)) in rate_groups.iter().enumerate() {
+                let mut sum_ass_val = 0.0;
+                let mut sum_cgst = 0.0;
+                let mut sum_sgst = 0.0;
+                let mut sum_igst = 0.0;
+                let mut sum_amot = 0.0;
+                let mut max_inv_val = first.inv_val;
+                let mut has_igst = false;
+
                 for row in group_rows {
-                    let labelled_inv_no = if group_idx == 0 {
-                        row.inv_no.clone()
+                    sum_ass_val += row.ass_val;
+                    sum_cgst += row.cgst;
+                    sum_sgst += row.sgst;
+                    sum_igst += row.igst;
+                    sum_amot += row.amot;
+                    if row.inv_val > max_inv_val {
+                        max_inv_val = row.inv_val;
+                    }
+                    if row.igst_yes_no == "Y" || row.igst > 0.0 {
+                        has_igst = true;
+                    }
+                }
+
+                let calculated_inv_val = if max_inv_val > 0.0 {
+                    max_inv_val
+                } else {
+                    sum_ass_val + sum_cgst + sum_sgst + sum_igst
+                };
+
+                result.push(TallyExportRow {
+                    cust_code: first.cust_code.clone(),
+                    cust_name: first.cust_name.clone(),
+                    inv_date: first.inv_date.clone(),
+                    re_type: first.re_type.clone(),
+                    inv_no: first.inv_no.clone(),
+                    part_code: first.part_code.clone(),
+                    part_name: first.part_name.clone(),
+                    tariff: first.tariff.clone(),
+                    qty: first.qty,
+                    bas_price: first.bas_price,
+                    ass_val: sum_ass_val,
+                    cgst: sum_cgst,
+                    sgst: sum_sgst,
+                    igst: sum_igst,
+                    amot: sum_amot,
+                    inv_val: calculated_inv_val,
+                    igst_yes_no: if has_igst {
+                        "Y".to_string()
                     } else {
-                        let suffix = if suffix_idx < suffix_chars.len() {
-                            suffix_chars[suffix_idx].to_string()
-                        } else {
-                            format!("{}", suffix_idx)
-                        };
-                        format!("{}{}", row.inv_no, suffix)
-                    };
-
-                    result.push(TallyExportRow {
-                        cust_code: row.cust_code.clone(),
-                        cust_name: row.cust_name.clone(),
-                        inv_date: row.inv_date.clone(),
-                        re_type: row.re_type.clone(),
-                        inv_no: labelled_inv_no,
-                        part_code: row.part_code.clone(),
-                        part_name: row.part_name.clone(),
-                        tariff: row.tariff.clone(),
-                        qty: row.qty,
-                        bas_price: row.bas_price,
-                        ass_val: row.ass_val,
-                        cgst: row.cgst,
-                        sgst: row.sgst,
-                        igst: row.igst,
-                        amot: row.amot,
-                        inv_val: row.inv_val,
-                        igst_yes_no: row.igst_yes_no.clone(),
-                        percentage: row.percentage,
-                    });
-                }
-
-                if group_idx > 0 {
-                    suffix_idx += 1;
-                }
+                        "N".to_string()
+                    },
+                    percentage: first.percentage,
+                });
             }
         }
 
@@ -613,60 +623,36 @@ mod tests {
     }
 
     #[test]
-    fn test_single_rate_invoice_no_splitting() {
+    fn test_single_row_per_invoice_merging() {
         let rows = vec![
-            make_row("INV001", "P01", 18.0, 1000.0),
-            make_row("INV001", "P02", 18.0, 500.0),
+            make_row("372076", "P01", 18.0, 1000.0),
+            make_row("372076", "P02", 18.0, 500.0),
         ];
 
         let result = TallyExcelExporter::split_multi_rate(&rows);
-        assert_eq!(result.len(), 2);
-        // All should keep the same invoice number
-        assert!(result.iter().all(|r| r.inv_no == "INV001"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].inv_no, "372076");
+        assert_eq!(result[0].ass_val, 1500.0);
+        assert_eq!(result[0].part_code, "P01"); // Kept first item's part code
     }
 
     #[test]
-    fn test_multi_rate_invoice_splits_correctly() {
+    fn test_multi_item_invoice_value_merging() {
         let rows = vec![
             make_row("372076", "P01", 0.0, 200.0),
             make_row("372076", "P02", 18.0, 800.0),
         ];
 
         let result = TallyExcelExporter::split_multi_rate(&rows);
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 1);
 
-        // First group (0%) keeps original number
         assert_eq!(result[0].inv_no, "372076");
-        assert_eq!(result[0].percentage, 0.0);
-
-        // Second group (18%) gets suffixed
-        assert_eq!(result[1].inv_no, "372076A");
-        assert_eq!(result[1].percentage, 18.0);
+        assert_eq!(result[0].ass_val, 1000.0);
+        assert_eq!(result[0].part_code, "P01");
     }
 
     #[test]
-    fn test_three_rate_invoice_splits_correctly() {
-        let rows = vec![
-            make_row("INV999", "P01", 0.0, 100.0),
-            make_row("INV999", "P02", 5.0, 300.0),
-            make_row("INV999", "P03", 18.0, 600.0),
-        ];
-
-        let result = TallyExcelExporter::split_multi_rate(&rows);
-        assert_eq!(result.len(), 3);
-
-        assert_eq!(result[0].inv_no, "INV999");
-        assert_eq!(result[0].percentage, 0.0);
-
-        assert_eq!(result[1].inv_no, "INV999A");
-        assert_eq!(result[1].percentage, 5.0);
-
-        assert_eq!(result[2].inv_no, "INV999B");
-        assert_eq!(result[2].percentage, 18.0);
-    }
-
-    #[test]
-    fn test_multiple_invoices_split_independently() {
+    fn test_multiple_invoices_independently_merged() {
         let rows = vec![
             make_row("INV001", "P01", 0.0, 100.0),
             make_row("INV001", "P02", 18.0, 500.0),
@@ -674,14 +660,13 @@ mod tests {
         ];
 
         let result = TallyExcelExporter::split_multi_rate(&rows);
-        assert_eq!(result.len(), 3);
+        assert_eq!(result.len(), 2);
 
-        // INV001 splits
         assert_eq!(result[0].inv_no, "INV001");
-        assert_eq!(result[1].inv_no, "INV001A");
+        assert_eq!(result[0].ass_val, 600.0);
 
-        // INV002 has single rate, no suffix
-        assert_eq!(result[2].inv_no, "INV002");
+        assert_eq!(result[1].inv_no, "INV002");
+        assert_eq!(result[1].ass_val, 700.0);
     }
 
     #[test]

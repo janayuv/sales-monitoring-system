@@ -1,7 +1,7 @@
-use rusqlite::{params, Connection, OptionalExtension};
 use crate::error::AppError;
-use crate::models::database_models::{DebitNoteRow, CreditNoteRow};
+use crate::models::database_models::{CreditNoteRow, DebitNoteRow};
 use crate::repositories::NoteRepository;
+use rusqlite::{params, Connection, OptionalExtension};
 
 pub struct SqliteNoteRepository;
 
@@ -34,13 +34,18 @@ impl NoteRepository for SqliteNoteRepository {
         Ok(())
     }
 
-    fn update_debit_note_status(&self, conn: &mut Connection, number: &str, status: &str) -> Result<(), AppError> {
+    fn update_debit_note_status(
+        &self,
+        conn: &mut Connection,
+        number: &str,
+        status: &str,
+    ) -> Result<(), AppError> {
         let approved_date = if status == "Approved" {
             "datetime('now')"
         } else {
             "NULL"
         };
-        
+
         let query = format!(
             "UPDATE debit_notes SET status = ?, approved_at = {} WHERE debit_note_number = ?",
             approved_date
@@ -54,7 +59,11 @@ impl NoteRepository for SqliteNoteRepository {
         Ok(())
     }
 
-    fn find_debit_note(&self, conn: &Connection, number: &str) -> Result<Option<DebitNoteRow>, AppError> {
+    fn find_debit_note(
+        &self,
+        conn: &Connection,
+        number: &str,
+    ) -> Result<Option<DebitNoteRow>, AppError> {
         conn.query_row(
             "SELECT debit_note_number, supplier_id, revision_id, debit_note_date,
                     total_taxable, total_cgst, total_sgst, total_igst, total_value, status, remarks, approved_at, created_at
@@ -86,7 +95,11 @@ impl NoteRepository for SqliteNoteRepository {
     }
 
     // Credit Notes
-    fn insert_credit_note(&self, conn: &mut Connection, row: &CreditNoteRow) -> Result<(), AppError> {
+    fn insert_credit_note(
+        &self,
+        conn: &mut Connection,
+        row: &CreditNoteRow,
+    ) -> Result<(), AppError> {
         conn.execute(
             "INSERT INTO credit_notes (credit_note_number, invoice_number, customer_id, credit_note_date,
                                       total_taxable, total_cgst, total_sgst, total_igst, total_value, status, remarks, approved_at)
@@ -113,13 +126,18 @@ impl NoteRepository for SqliteNoteRepository {
         Ok(())
     }
 
-    fn update_credit_note_status(&self, conn: &mut Connection, number: &str, status: &str) -> Result<(), AppError> {
+    fn update_credit_note_status(
+        &self,
+        conn: &mut Connection,
+        number: &str,
+        status: &str,
+    ) -> Result<(), AppError> {
         let approved_date = if status == "Approved" {
             "datetime('now')"
         } else {
             "NULL"
         };
-        
+
         let query = format!(
             "UPDATE credit_notes SET status = ?, approved_at = {} WHERE credit_note_number = ?",
             approved_date
@@ -133,7 +151,11 @@ impl NoteRepository for SqliteNoteRepository {
         Ok(())
     }
 
-    fn find_credit_note(&self, conn: &Connection, number: &str) -> Result<Option<CreditNoteRow>, AppError> {
+    fn find_credit_note(
+        &self,
+        conn: &Connection,
+        number: &str,
+    ) -> Result<Option<CreditNoteRow>, AppError> {
         conn.query_row(
             "SELECT credit_note_number, invoice_number, customer_id, credit_note_date,
                     total_taxable, total_cgst, total_sgst, total_igst, total_value, status, remarks, approved_at, created_at

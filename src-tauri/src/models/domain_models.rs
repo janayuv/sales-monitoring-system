@@ -111,6 +111,29 @@ pub struct DashboardMetrics {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerMasterRow.ts")]
+pub struct CustomerMasterRow {
+    pub id: i64,
+    pub customer_code: String,
+    pub report_name: String,
+    pub tally_name: Option<String>,
+    pub legal_name: Option<String>,
+    pub gstin: Option<String>,
+    pub address1: Option<String>,
+    pub address2: Option<String>,
+    pub location: Option<String>,
+    pub pincode: Option<String>,
+    pub state_code: Option<String>,
+    pub place_of_supply: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub category_name: Option<String>,
+    pub remarks: Option<String>,
+    pub status: String,
+    pub match_status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
 #[ts(export, export_to = "../../src/types/bindings/InvoiceSummary.ts")]
 pub struct InvoiceSummary {
     pub invoice_number: String,

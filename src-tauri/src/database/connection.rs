@@ -1,10 +1,9 @@
-use std::fs;
-use std::path::PathBuf;
+use crate::database::migrate::run_migrations;
+use crate::error::AppError;
 use rusqlite::Connection;
+use std::fs;
 use tauri::AppHandle;
 use tauri::Manager;
-use crate::error::AppError;
-use crate::database::migrate::run_migrations;
 
 pub struct DbConnectionManager;
 
@@ -20,21 +19,19 @@ impl DbConnectionManager {
             .path()
             .app_data_dir()
             .map_err(|e| AppError::Internal(format!("Failed to resolve AppData path: {}", e)))?;
-            
+
         let db_dir = app_data_dir.join("databases");
         if !db_dir.exists() {
-            fs::create_dir_all(&db_dir)
-                .map_err(|e| AppError::Io(e))?;
+            fs::create_dir_all(&db_dir).map_err(|e| AppError::Io(e))?;
         }
-        
+
         let db_path = db_dir.join(format!("company_{}.db", company_code));
         log::info!("Connecting to database: {:?}", db_path);
 
-        let mut conn = Connection::open(&db_path)
-            .map_err(|e| AppError::Db {
-                code: "ERR_DB_002".to_string(),
-                message: format!("Failed to open database file: {}", e),
-            })?;
+        let mut conn = Connection::open(&db_path).map_err(|e| AppError::Db {
+            code: "ERR_DB_002".to_string(),
+            message: format!("Failed to open database file: {}", e),
+        })?;
 
         // Authenticate with SQLCipher key
         conn.pragma_update(None, "key", encryption_key)
@@ -70,30 +67,28 @@ impl DbConnectionManager {
                 code: "ERR_BACKUP_001".to_string(),
                 message: format!("Integrity check failed: {}", e),
             })?;
-            
+
         Ok(integrity == "ok")
     }
 
     /// Runs database optimization: VACUUM, ANALYZE and PRAGMA optimize.
     pub fn optimize(conn: &Connection) -> Result<(), AppError> {
-        conn.execute("VACUUM;", [])
-            .map_err(|e| AppError::Db {
-                code: "ERR_DB_003".to_string(),
-                message: format!("VACUUM failed: {}", e),
-            })?;
-            
-        conn.execute("ANALYZE;", [])
-            .map_err(|e| AppError::Db {
-                code: "ERR_DB_003".to_string(),
-                message: format!("ANALYZE failed: {}", e),
-            })?;
-            
+        conn.execute("VACUUM;", []).map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("VACUUM failed: {}", e),
+        })?;
+
+        conn.execute("ANALYZE;", []).map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("ANALYZE failed: {}", e),
+        })?;
+
         conn.execute("PRAGMA optimize;", [])
             .map_err(|e| AppError::Db {
                 code: "ERR_DB_003".to_string(),
                 message: format!("PRAGMA optimize failed: {}", e),
             })?;
-            
+
         Ok(())
     }
 }

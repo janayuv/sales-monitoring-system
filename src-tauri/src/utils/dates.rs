@@ -1,4 +1,4 @@
-use chrono::{Datelike, NaiveDate, ParseResult};
+use chrono::{Datelike, NaiveDate};
 
 /// Standardizes date parsing from common formats found in Excel (like "DD-MM-YYYY", "DD/MM/YYYY", "YYYY-MM-DD")
 pub fn parse_date(date_str: &str) -> Option<NaiveDate> {
@@ -11,6 +11,12 @@ pub fn parse_date(date_str: &str) -> Option<NaiveDate> {
     if let Ok(d) = NaiveDate::parse_from_str(cleaned, "%Y-%m-%d") {
         return Some(d);
     }
+    // Try YYYYMMDD (e.g. 20260701)
+    if cleaned.len() == 8 && cleaned.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(d) = NaiveDate::parse_from_str(cleaned, "%Y%m%d") {
+            return Some(d);
+        }
+    }
     // Try DD-MM-YYYY
     if let Ok(d) = NaiveDate::parse_from_str(cleaned, "%d-%m-%Y") {
         return Some(d);
@@ -22,6 +28,23 @@ pub fn parse_date(date_str: &str) -> Option<NaiveDate> {
     // Try YYYY/MM/DD
     if let Ok(d) = NaiveDate::parse_from_str(cleaned, "%Y/%m/%d") {
         return Some(d);
+    }
+
+    // Try Excel float/integer serial date number (e.g. "45474" or 45474.0)
+    if let Ok(val) = cleaned.parse::<f64>() {
+        let val_i = val as i64;
+        if val_i > 19000000 && val_i < 21000000 {
+            let s = val_i.to_string();
+            if let Ok(d) = NaiveDate::parse_from_str(&s, "%Y%m%d") {
+                return Some(d);
+            }
+        }
+        let days = val_i - 25569;
+        if days > 0 && days < 100000 {
+            if let Some(epoch) = NaiveDate::from_ymd_opt(1970, 1, 1) {
+                return Some(epoch + chrono::Duration::days(days));
+            }
+        }
     }
 
     None

@@ -60,7 +60,20 @@ pub fn run() {
             commands::export_commands::get_top_customers,
             commands::export_commands::get_top_items,
             commands::export_commands::get_dashboard_metrics,
-            commands::export_commands::get_financial_years_list,
+            // Customer Master & Category Module
+            commands::customer_commands::get_customer_master,
+            commands::customer_commands::get_customer_categories,
+            commands::customer_commands::create_customer_category,
+            commands::customer_commands::delete_customer_category,
+            commands::customer_commands::update_customer_mapping,
+            commands::customer_commands::bulk_update_customer_mappings,
+            // Phase 6: Maintenance & Backup
+            commands::maintenance_commands::check_db_integrity,
+            commands::maintenance_commands::vacuum_database,
+            commands::maintenance_commands::create_db_backup,
+            commands::maintenance_commands::get_backup_status,
+            commands::maintenance_commands::get_app_setting,
+            commands::maintenance_commands::set_app_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,6 @@
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{self, Read};
-use sha2::{Digest, Sha256};
 
 pub fn compute_file_hash(path: &std::path::Path) -> io::Result<String> {
     let mut file = File::open(path)?;
