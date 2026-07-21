@@ -29,6 +29,26 @@ import { CustomerMasterRow } from "../types/bindings/CustomerMasterRow";
 export type { CustomerCategoryRow };
 export type { CustomerMasterRow };
 
+export interface CustomerMasterPayload {
+  id: number | null;
+  customer_code: string;
+  report_name: string;
+  tally_name: string | null;
+  legal_name: string | null;
+  gstin: string | null;
+  address1: string | null;
+  address2: string | null;
+  location: string | null;
+  pincode: string | null;
+  state_code: string | null;
+  place_of_supply: string | null;
+  phone: string | null;
+  email: string | null;
+  category_name: string | null;
+  remarks: string | null;
+  status: "Approved" | "Pending_Review";
+}
+
 export class ApiService {
   /**
    * Switch the active database connection to another company db file.
@@ -172,18 +192,17 @@ export class ApiService {
   }
 
   /**
-   * Update a customer's Tally name and Category.
+   * Create a new customer master record. Returns the new row id.
    */
-  static async updateCustomerMapping(
-    customerId: number,
-    tallyName?: string | null,
-    categoryName?: string | null
-  ): Promise<void> {
-    await invoke("update_customer_mapping", {
-      customerId,
-      tallyName: tallyName || null,
-      categoryName: categoryName || null,
-    });
+  static async createCustomerMaster(payload: CustomerMasterPayload): Promise<number> {
+    return await invoke<number>("create_customer_master", { payload });
+  }
+
+  /**
+   * Update an existing customer master record (identified by id).
+   */
+  static async updateCustomerMaster(payload: CustomerMasterPayload): Promise<void> {
+    await invoke("update_customer_master", { payload });
   }
 
   /**

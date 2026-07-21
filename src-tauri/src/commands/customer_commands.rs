@@ -255,14 +255,84 @@ pub fn get_customer_master(state: State<'_, DbState>) -> Result<Vec<CustomerMast
     Ok(result)
 }
 
-/// Update a single customer's mapping (both Tally name and Category name).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomerMasterPayload {
+    pub id: Option<i64>,
+    pub customer_code: String,
+    pub report_name: String,
+    pub tally_name: Option<String>,
+    pub legal_name: Option<String>,
+    pub gstin: Option<String>,
+    pub address1: Option<String>,
+    pub address2: Option<String>,
+    pub location: Option<String>,
+    pub pincode: Option<String>,
+    pub state_code: Option<String>,
+    pub place_of_supply: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub category_name: Option<String>,
+    pub remarks: Option<String>,
+    pub status: String,
+}
+
+fn norm(v: &Option<String>) -> Option<String> {
+    v.as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Light field validation (spec §4.3). Required: customer_code, report_name.
+pub fn validate_customer_payload(p: &CustomerMasterPayload) -> Result<(), AppError> {
+    let val = |msg: &str| AppError::Validation {
+        code: "ERR_VAL_001".to_string(),
+        message: msg.to_string(),
+    };
+    if p.customer_code.trim().is_empty() {
+        return Err(val("Customer code is required"));
+    }
+    if p.report_name.trim().is_empty() {
+        return Err(val("Report name is required"));
+    }
+    if let Some(g) = norm(&p.gstin) {
+        if g.len() != 15 {
+            return Err(val("GSTIN must be 15 characters"));
+        }
+    }
+    if let Some(pin) = norm(&p.pincode) {
+        if pin.len() != 6 || !pin.chars().all(|c| c.is_ascii_digit()) {
+            return Err(val("Pincode must be 6 digits"));
+        }
+    }
+    for (label, code) in [
+        ("State code", norm(&p.state_code)),
+        ("Place of supply", norm(&p.place_of_supply)),
+    ] {
+        if let Some(c) = code {
+            if c.len() != 2 || !c.chars().all(|ch| ch.is_ascii_digit()) {
+                return Err(val(&format!("{label} must be a 2-digit GST code")));
+            }
+        }
+    }
+    if let Some(e) = norm(&p.email) {
+        if !e.contains('@') {
+            return Err(val("Email must contain @"));
+        }
+    }
+    if p.status != "Approved" && p.status != "Pending_Review" {
+        return Err(val("Status must be Approved or Pending_Review"));
+    }
+    Ok(())
+}
+
+/// Create a new customer master record. Returns the new row id.
 #[tauri::command]
-pub fn update_customer_mapping(
+pub fn create_customer_master(
     state: State<'_, DbState>,
-    customer_id: i64,
-    tally_name: Option<String>,
-    category_name: Option<String>,
-) -> Result<(), AppError> {
+    payload: CustomerMasterPayload,
+) -> Result<i64, AppError> {
+    validate_customer_payload(&payload)?;
     let conn_guard = state
         .conn
         .lock()
@@ -272,26 +342,86 @@ pub fn update_customer_mapping(
         message: "No active database connection profile".to_string(),
     })?;
 
-    let tally_val = tally_name
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-    let category_val = category_name
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
     conn.execute(
-        "UPDATE customers SET tally_customer_name = ?, category_name = ? WHERE id = ?",
-        rusqlite::params![tally_val, category_val, customer_id],
+        "INSERT INTO customers
+            (customer_code, report_name, tally_customer_name, legal_name, gstin, address1, address2,
+             location, pincode, state_code, place_of_supply, phone, email, category_name, remarks, status)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rusqlite::params![
+            payload.customer_code.trim(),
+            payload.report_name.trim(),
+            norm(&payload.tally_name),
+            norm(&payload.legal_name),
+            norm(&payload.gstin),
+            norm(&payload.address1),
+            norm(&payload.address2),
+            norm(&payload.location),
+            norm(&payload.pincode),
+            norm(&payload.state_code),
+            norm(&payload.place_of_supply),
+            norm(&payload.phone),
+            norm(&payload.email),
+            norm(&payload.category_name),
+            norm(&payload.remarks),
+            payload.status,
+        ],
     )
     .map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
-        message: format!("Failed to update customer mapping: {}", e),
+        message: format!("Failed to create customer (code may already exist): {}", e),
+    })?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Update an existing customer master record (identified by id).
+#[tauri::command]
+pub fn update_customer_master(
+    state: State<'_, DbState>,
+    payload: CustomerMasterPayload,
+) -> Result<(), AppError> {
+    validate_customer_payload(&payload)?;
+    let id = payload.id.ok_or_else(|| AppError::Validation {
+        code: "ERR_VAL_001".to_string(),
+        message: "Customer id is required for update".to_string(),
+    })?;
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
     })?;
 
+    conn.execute(
+        "UPDATE customers SET
+            customer_code=?, report_name=?, tally_customer_name=?, legal_name=?, gstin=?, address1=?, address2=?,
+            location=?, pincode=?, state_code=?, place_of_supply=?, phone=?, email=?, category_name=?, remarks=?, status=?
+         WHERE id=?",
+        rusqlite::params![
+            payload.customer_code.trim(),
+            payload.report_name.trim(),
+            norm(&payload.tally_name),
+            norm(&payload.legal_name),
+            norm(&payload.gstin),
+            norm(&payload.address1),
+            norm(&payload.address2),
+            norm(&payload.location),
+            norm(&payload.pincode),
+            norm(&payload.state_code),
+            norm(&payload.place_of_supply),
+            norm(&payload.phone),
+            norm(&payload.email),
+            norm(&payload.category_name),
+            norm(&payload.remarks),
+            payload.status,
+            id,
+        ],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to update customer: {}", e),
+    })?;
     Ok(())
 }
 
@@ -382,5 +512,48 @@ mod tests {
             derive_match_status(Some("Tally Co"), Some("g"), Some("a"), Some("33")),
             "Complete"
         );
+    }
+
+    fn sample_payload(code: &str) -> CustomerMasterPayload {
+        CustomerMasterPayload {
+            id: None,
+            customer_code: code.to_string(),
+            report_name: "Report Co".to_string(),
+            tally_name: Some("Tally Co".to_string()),
+            legal_name: None,
+            gstin: Some("33AAACH2364M1ZM".to_string()),
+            address1: Some("H-1 SIPCOT".to_string()),
+            address2: None,
+            location: Some("KANCHEEPURAM".to_string()),
+            pincode: Some("602117".to_string()),
+            state_code: Some("33".to_string()),
+            place_of_supply: Some("33".to_string()),
+            phone: None,
+            email: None,
+            category_name: None,
+            remarks: None,
+            status: "Approved".to_string(),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_blank_code_and_name() {
+        let mut p = sample_payload("");
+        assert!(validate_customer_payload(&p).is_err());
+        p = sample_payload("C1");
+        p.report_name = "   ".to_string();
+        assert!(validate_customer_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_bad_gstin_length() {
+        let mut p = sample_payload("C1");
+        p.gstin = Some("SHORT".to_string());
+        assert!(validate_customer_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_good_payload() {
+        assert!(validate_customer_payload(&sample_payload("C1")).is_ok());
     }
 }
