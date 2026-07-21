@@ -83,7 +83,8 @@ pub struct SupplierRow {
 pub struct CustomerRow {
     pub id: Option<i64>,
     pub customer_code: String,
-    pub customer_name: String,
+    pub report_name: String,
+    pub tally_customer_name: Option<String>,
     pub gstin: Option<String>,
     pub state_code: Option<String>,
     pub address: Option<String>,
@@ -182,7 +183,10 @@ pub struct InvoiceItemRow {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../src/types/bindings/SupplierPriceRevisionRow.ts")]
+#[ts(
+    export,
+    export_to = "../../src/types/bindings/SupplierPriceRevisionRow.ts"
+)]
 pub struct SupplierPriceRevisionRow {
     pub id: Option<i64>,
     pub supplier_id: i64,
@@ -259,7 +263,10 @@ pub struct ImportTemplateRow {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../src/types/bindings/ImportTemplateMappingRow.ts")]
+#[ts(
+    export,
+    export_to = "../../src/types/bindings/ImportTemplateMappingRow.ts"
+)]
 pub struct ImportTemplateMappingRow {
     pub id: Option<i64>,
     pub template_id: i64,
@@ -290,7 +297,10 @@ pub struct SavedFilterRow {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../src/types/bindings/ValidationExceptionRow.ts")]
+#[ts(
+    export,
+    export_to = "../../src/types/bindings/ValidationExceptionRow.ts"
+)]
 pub struct ValidationExceptionRow {
     pub id: Option<i64>,
     pub level: String,

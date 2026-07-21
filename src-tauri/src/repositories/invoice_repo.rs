@@ -1,8 +1,8 @@
-use rusqlite::{params, Connection, OptionalExtension};
 use crate::error::AppError;
-use crate::models::database_models::{InvoiceRow, InvoiceItemRow};
+use crate::models::database_models::{InvoiceItemRow, InvoiceRow};
 use crate::models::domain_models::InvoiceSummary;
 use crate::repositories::InvoiceRepository;
+use rusqlite::{params, Connection, OptionalExtension};
 
 pub struct SqliteInvoiceRepository;
 
@@ -43,13 +43,18 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(())
     }
 
-    fn update_invoice_status(&self, conn: &mut Connection, number: &str, status: &str) -> Result<(), AppError> {
+    fn update_invoice_status(
+        &self,
+        conn: &mut Connection,
+        number: &str,
+        status: &str,
+    ) -> Result<(), AppError> {
         let cancel_date = if status == "Cancelled" {
             "datetime('now')"
         } else {
             "NULL"
         };
-        
+
         let query = format!(
             "UPDATE invoices SET status = ?, cancellation_date = {}, updated_at = datetime('now') WHERE invoice_number = ?",
             cancel_date
@@ -72,7 +77,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(())
     }
 
-    fn find_invoice(&self, conn: &Connection, number: &str) -> Result<Option<InvoiceRow>, AppError> {
+    fn find_invoice(
+        &self,
+        conn: &Connection,
+        number: &str,
+    ) -> Result<Option<InvoiceRow>, AppError> {
         conn.query_row(
             "SELECT invoice_number, invoice_no_long, invoice_date, customer_id, financial_year_id,
                     total_taxable, total_cgst, total_sgst, total_igst, total_cess, total_value,
@@ -120,24 +129,27 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         limit: u32,
     ) -> Result<Vec<InvoiceSummary>, AppError> {
         let mut query = "
-            SELECT i.invoice_number, i.invoice_date, c.customer_code, c.customer_name,
+            SELECT i.invoice_number, i.invoice_date, c.customer_code, c.report_name AS customer_name,
                    i.total_taxable, (i.total_cgst + i.total_sgst + i.total_igst) as total_tax,
                    i.total_value, i.status
             FROM invoices i
             JOIN customers c ON i.customer_id = c.id
-        ".to_string();
-        
+        "
+        .to_string();
+
         let mut params_vec: Vec<String> = Vec::new();
-        
+
         if let (Some(c_date), Some(c_no)) = (cursor_date, cursor_no) {
-            query.push_str(" WHERE (i.invoice_date < ? OR (i.invoice_date = ? AND i.invoice_number < ?))");
+            query.push_str(
+                " WHERE (i.invoice_date < ? OR (i.invoice_date = ? AND i.invoice_number < ?))",
+            );
             params_vec.push(c_date.to_string());
             params_vec.push(c_date.to_string());
             params_vec.push(c_no.to_string());
         }
-        
+
         query.push_str(" ORDER BY i.invoice_date DESC, i.invoice_number DESC LIMIT ?");
-        
+
         let mut stmt = conn.prepare(&query).map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
             message: format!("Failed to prepare paginated invoices query: {}", e),
@@ -160,7 +172,10 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let rows = if params_vec.is_empty() {
             stmt.query_map([limit], map_row)
         } else {
-            stmt.query_map(params![params_vec[0], params_vec[1], params_vec[2], limit], map_row)
+            stmt.query_map(
+                params![params_vec[0], params_vec[1], params_vec[2], limit],
+                map_row,
+            )
         }
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
@@ -178,7 +193,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     // Invoice Items
-    fn insert_invoice_items(&self, conn: &mut Connection, items: &[InvoiceItemRow]) -> Result<(), AppError> {
+    fn insert_invoice_items(
+        &self,
+        conn: &mut Connection,
+        items: &[InvoiceItemRow],
+    ) -> Result<(), AppError> {
         let mut stmt = conn.prepare(
             "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
                                         cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value)
@@ -212,7 +231,11 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         Ok(())
     }
 
-    fn get_invoice_items(&self, conn: &Connection, invoice_number: &str) -> Result<Vec<InvoiceItemRow>, AppError> {
+    fn get_invoice_items(
+        &self,
+        conn: &Connection,
+        invoice_number: &str,
+    ) -> Result<Vec<InvoiceItemRow>, AppError> {
         let mut stmt = conn.prepare(
             "SELECT id, invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
                     cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value

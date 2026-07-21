@@ -82,6 +82,14 @@ pub fn query_tally_export_rows(
         message: "No active database connection profile".to_string(),
     })?;
 
+    let tally_register_code: String = conn
+        .query_row(
+            "SELECT setting_value FROM app_settings WHERE setting_key = 'tally_register_code'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "TF".to_string());
+
     let status_clause = match status_filter.as_deref() {
         Some("ALL") | None => String::new(),
         Some(s) => format!("AND i.status = '{}'", s.replace('\'', "''")),
@@ -90,9 +98,9 @@ pub fn query_tally_export_rows(
     let query = format!(
         "SELECT
             c.customer_code,
-            c.customer_name,
+            COALESCE(c.tally_customer_name, c.report_name) AS customer_name,
             i.invoice_date,
-            COALESCE(i.invoice_type, 'Regular B2B'),
+            '{}' AS re_type,
             i.invoice_number,
             ii.part_code,
             it.part_name,
@@ -120,6 +128,7 @@ pub fn query_tally_export_rows(
           AND i.status NOT IN ('Cancelled', 'Draft')
           {}
         ORDER BY i.invoice_date ASC, i.invoice_number ASC, ii.part_code ASC",
+        tally_register_code.replace('\'', "''"),
         status_clause
     );
 
@@ -177,12 +186,60 @@ pub fn export_tally_excel(
     date_to: String,
     output_path: String,
 ) -> Result<ExportResult, AppError> {
-    let rows = query_tally_export_rows(state, date_from, date_to, None)?;
+    let rows = query_tally_export_rows(state.clone(), date_from.clone(), date_to.clone(), None)?;
 
     if rows.is_empty() {
         return Err(AppError::Export {
             code: "ERR_TALLY_001".to_string(),
             message: "No invoice data found for the selected date range".to_string(),
+        });
+    }
+
+    // Check if any customer in the date range lacks a Tally Customer Name
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let mut unmapped_stmt = conn
+        .prepare(
+            "SELECT DISTINCT c.customer_code, c.report_name
+             FROM invoices i
+             JOIN customers c ON i.customer_id = c.id
+             WHERE i.invoice_date >= ? AND i.invoice_date <= ?
+               AND i.status NOT IN ('Cancelled', 'Draft')
+               AND (c.tally_customer_name IS NULL OR TRIM(c.tally_customer_name) = '')",
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to check unmapped Tally customers: {}", e),
+        })?;
+
+    let unmapped_customers: Vec<String> = unmapped_stmt
+        .query_map(params![date_from, date_to], |row| {
+            let code: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            Ok(format!("{} ({})", name, code))
+        })
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to map unmapped customers: {}", e),
+        })?
+        .filter_map(Result::ok)
+        .collect();
+
+    if !unmapped_customers.is_empty() {
+        return Err(AppError::Export {
+            code: "ERR_TALLY_UNMAPPED_CUSTOMERS".to_string(),
+            message: format!(
+                "Tally export blocked! {} customer(s) in this date range still need a Tally customer name: {}. Please map them in Customer Matching first.",
+                unmapped_customers.len(),
+                unmapped_customers.join(", ")
+            ),
         });
     }
 
@@ -460,7 +517,7 @@ pub fn get_top_customers(
         .prepare(
             "SELECT
             c.customer_code,
-            c.customer_name,
+            c.report_name,
             COALESCE(SUM(i.total_value), 0.0),
             0.0,
             COUNT(DISTINCT i.invoice_number)
@@ -702,7 +759,7 @@ pub fn get_dashboard_metrics(state: State<'_, DbState>) -> Result<DashboardMetri
     let top_customers = {
         let mut stmt = conn
             .prepare(
-                "SELECT c.customer_name, scs.total_value
+                "SELECT c.report_name, scs.total_value
              FROM summary_customer_sales scs
              JOIN customers c ON scs.customer_id = c.id
              WHERE scs.financial_year_id = ?

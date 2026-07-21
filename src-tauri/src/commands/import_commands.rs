@@ -1,21 +1,14 @@
 use crate::error::AppError;
-use crate::models::database_models::{
-    CustomerRow, ImportBatchRow, ImportTemplateRow, InvoiceItemRow, InvoiceRow, ItemRow,
-    SupplierRow, ValidationExceptionRow,
-};
+use crate::models::database_models::{ImportTemplateRow, InvoiceItemRow, InvoiceRow};
 use crate::models::domain_models::ImportPreview;
-use crate::repositories::invoice_repo::SqliteInvoiceRepository;
-use crate::repositories::master_repo::SqliteMasterRepository;
 use crate::repositories::report_repo::SqliteReportRepository;
-use crate::repositories::InvoiceRepository;
-use crate::repositories::MasterRepository;
 use crate::repositories::ReportRepository;
-use crate::services::import_service::ImportService;
+use crate::services::import_service::{cell_to_f64, cell_to_string, ImportService};
 use crate::state::DbState;
 use crate::utils::dates::format_db_date;
 use crate::utils::dates::parse_date;
 use crate::utils::hash::compute_file_hash;
-use calamine::{open_workbook_auto, DataType, Reader};
+use calamine::{open_workbook_auto, Reader};
 use rusqlite::params;
 use std::collections::HashMap;
 use std::path::Path;
@@ -102,7 +95,15 @@ pub fn commit_import_batch(
         message: "No active database connection profile".to_string(),
     })?;
 
-    let path = Path::new(&file_path);
+    let clean_file_path = file_path.trim().trim_matches('"').trim_matches('\'');
+    let path = Path::new(clean_file_path);
+    if !path.exists() {
+        return Err(AppError::Excel(format!(
+            "File does not exist or cannot be accessed: {}",
+            clean_file_path
+        )));
+    }
+
     let file_hash = compute_file_hash(path)
         .map_err(|e| AppError::Excel(format!("Failed to read file hash: {}", e)))?;
     let file_size = path.metadata().map(|m| m.len() as i64).unwrap_or(0);
@@ -129,37 +130,7 @@ pub fn commit_import_batch(
     }
 
     // Load active template mappings
-    let mut stmt = conn
-        .prepare(
-            "SELECT excel_column_header, target_field_key 
-             FROM import_template_mappings 
-             WHERE template_id = ?",
-        )
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to load mappings: {}", e),
-        })?;
-
-    let rows = stmt
-        .query_map([template_id], |row| {
-            let header: String = row.get(0)?;
-            let key: String = row.get(1)?;
-            Ok((header.trim().to_lowercase(), key))
-        })
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to read mappings: {}", e),
-        })?;
-
-    let mut mappings = HashMap::new();
-    for r in rows {
-        let (header, key) = r.map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Mapping parse error: {}", e),
-        })?;
-        mappings.insert(header, key);
-    }
-    drop(stmt);
+    let mappings = ImportService::load_mappings(conn, template_id)?;
 
     let source_type: String = conn
         .query_row(
@@ -189,11 +160,10 @@ pub fn commit_import_batch(
 
     let mut col_index_to_key = HashMap::new();
     for (idx, cell) in headers_row.iter().enumerate() {
-        if let Some(header_str) = cell.as_string() {
-            let header_clean = header_str.trim().to_lowercase();
-            if let Some(key) = mappings.get(&header_clean) {
-                col_index_to_key.insert(idx, key.clone());
-            }
+        let header_str = cell_to_string(cell);
+        let header_clean = header_str.trim().to_lowercase();
+        if let Some(key) = mappings.get(&header_clean) {
+            col_index_to_key.insert(idx, key.clone());
         }
     }
 
@@ -229,9 +199,6 @@ pub fn commit_import_batch(
 
     let batch_id = tx.last_insert_rowid();
 
-    let master_repo = SqliteMasterRepository;
-    let invoice_repo = SqliteInvoiceRepository;
-
     let mut success_count = 0;
     let mut warning_count = 0;
     let mut error_count = 0;
@@ -239,9 +206,7 @@ pub fn commit_import_batch(
     let mut invoice_items_buffer: HashMap<String, Vec<InvoiceItemRow>> = HashMap::new();
     let mut invoice_headers_buffer: HashMap<String, InvoiceRow> = HashMap::new();
 
-    let mut row_idx = 1;
     for row in rows_iter {
-        row_idx += 1;
         let mut row_data = HashMap::new();
         for (col_idx, cell) in row.iter().enumerate() {
             if let Some(key) = col_index_to_key.get(&col_idx) {
@@ -251,38 +216,71 @@ pub fn commit_import_batch(
 
         let inv_no = row_data
             .get("invoice_number")
-            .and_then(|c| c.as_string())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+            .map(cell_to_string)
+            .unwrap_or_default();
         if inv_no.is_empty() {
             continue; // Skip empty rows
         }
 
         let inv_date_str = row_data
             .get("invoice_date")
-            .and_then(|c| c.as_string())
+            .map(cell_to_string)
             .unwrap_or_default();
         let parsed_inv_date = parse_date(&inv_date_str);
         if parsed_inv_date.is_none() {
             error_count += 1;
             continue; // Skip invalid date line
         }
-        let inv_date = format_db_date(parsed_inv_date.unwrap());
+        let inv_date_obj = parsed_inv_date.unwrap();
+        let inv_date = format_db_date(inv_date_obj);
+
+        // Resolve or create Financial Year dynamically based on invoice date
+        use chrono::Datelike;
+        let year = inv_date_obj.year();
+        let month = inv_date_obj.month();
+        let (fy_start_year, fy_end_year) = if month >= 4 {
+            (year, year + 1)
+        } else {
+            (year - 1, year)
+        };
+        let fy_label = format!("FY {}-{}", fy_start_year, fy_end_year % 100);
+        let fy_start = format!("{}-04-01", fy_start_year);
+        let fy_end = format!("{}-03-31", fy_end_year);
+
+        let active_fy_id: i64 = match tx.query_row(
+            "SELECT id FROM financial_years WHERE label = ?",
+            [&fy_label],
+            |row| row.get(0),
+        ) {
+            Ok(id) => {
+                tx.execute("UPDATE financial_years SET is_active = (id = ?)", [id])
+                    .ok();
+                id
+            }
+            Err(_) => {
+                tx.execute("UPDATE financial_years SET is_active = 0", [])
+                    .ok();
+                tx.execute(
+                    "INSERT INTO financial_years (label, start_date, end_date, is_active, is_locked) VALUES (?, ?, ?, 1, 0)",
+                    params![fy_label, fy_start, fy_end],
+                )
+                .map_err(|e| AppError::Db {
+                    code: "ERR_DB_003".to_string(),
+                    message: format!("Failed to create financial year: {}", e),
+                })?;
+                tx.last_insert_rowid()
+            }
+        };
 
         // Extract Customer Code
         let cust_code = row_data
             .get("customer_code")
-            .and_then(|c| c.as_string())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+            .map(cell_to_string)
+            .unwrap_or_default();
         let cust_name = row_data
             .get("customer_name")
-            .and_then(|c| c.as_string())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+            .map(cell_to_string)
+            .unwrap_or_default();
         let customer_id: i64 = match tx.query_row(
             "SELECT id FROM customers WHERE customer_code = ?",
             [&cust_code],
@@ -292,7 +290,7 @@ pub fn commit_import_batch(
             Err(_) => {
                 // Customer does not exist in master table - Add to queue
                 tx.execute(
-                    "INSERT INTO customers (customer_code, customer_name, status) VALUES (?, ?, 'Pending_Review')",
+                    "INSERT INTO customers (customer_code, report_name, status) VALUES (?, ?, 'Pending_Review')",
                     params![cust_code, cust_name],
                 )
                 .map_err(|e| AppError::Db {
@@ -307,16 +305,12 @@ pub fn commit_import_batch(
         // Extract Part details
         let part_code = row_data
             .get("part_code")
-            .and_then(|c| c.as_string())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+            .map(cell_to_string)
+            .unwrap_or_default();
         let part_name = row_data
             .get("part_name")
-            .and_then(|c| c.as_string())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+            .map(cell_to_string)
+            .unwrap_or_default();
         let part_exists: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM items WHERE part_code = ?)",
@@ -340,46 +334,25 @@ pub fn commit_import_batch(
         }
 
         // Values
-        let qty = row_data
-            .get("quantity")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
+        let qty = row_data.get("quantity").map(cell_to_f64).unwrap_or(0.0);
         let rate = row_data
             .get("rate_pre_unit")
-            .and_then(|c| c.as_f64())
+            .map(cell_to_f64)
             .unwrap_or(0.0);
         let ass_val = row_data
             .get("assessable_value")
-            .and_then(|c| c.as_f64())
+            .map(cell_to_f64)
             .unwrap_or(0.0);
-        let cgst_rate = row_data
-            .get("cgst_rate")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
-        let cgst = row_data
-            .get("cgst_amount")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
-        let sgst_rate = row_data
-            .get("sgst_rate")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
-        let sgst = row_data
-            .get("sgst_amount")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
-        let igst_rate = row_data
-            .get("igst_rate")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
-        let igst = row_data
-            .get("igst_amount")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
-        let total_val = row_data
-            .get("total_value")
-            .and_then(|c| c.as_f64())
-            .unwrap_or(0.0);
+        let cgst_rate = row_data.get("cgst_rate").map(cell_to_f64).unwrap_or(0.0);
+        let cgst = row_data.get("cgst_amount").map(cell_to_f64).unwrap_or(0.0);
+        let sgst_rate = row_data.get("sgst_rate").map(cell_to_f64).unwrap_or(0.0);
+        let sgst = row_data.get("sgst_amount").map(cell_to_f64).unwrap_or(0.0);
+        let igst_rate = row_data.get("igst_rate").map(cell_to_f64).unwrap_or(0.0);
+        let igst = row_data.get("igst_amount").map(cell_to_f64).unwrap_or(0.0);
+        let mut total_val = row_data.get("total_value").map(cell_to_f64).unwrap_or(0.0);
+        if total_val == 0.0 {
+            total_val = ass_val + cgst + sgst + igst;
+        }
 
         let item_row = InvoiceItemRow {
             id: None,
@@ -440,18 +413,8 @@ pub fn commit_import_batch(
 
     // Flush buffers into database transactions
     for (inv_no, mut header) in invoice_headers_buffer {
-        // If customer status is pending review, set invoice status to Draft
-        let cust_review_status: String = tx
-            .query_row(
-                "SELECT status FROM customers WHERE id = ?",
-                [header.customer_id],
-                |row| row.get(0),
-            )
-            .unwrap_or_else(|_| "Approved".to_string());
-
-        if cust_review_status == "Pending_Review" {
-            header.status = "Draft".to_string();
-        }
+        // Imported invoices default to "Imported" status for immediate active visibility
+        header.status = "Imported".to_string();
 
         // Delete existing invoice lines if overwriting
         tx.execute(

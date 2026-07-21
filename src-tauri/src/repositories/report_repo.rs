@@ -149,7 +149,7 @@ mod tests {
         run_migrations(&mut conn).unwrap();
 
         conn.execute_batch(
-            "INSERT INTO customers (id, customer_code, customer_name, status) VALUES (1, 'CUST01', 'Test Customer', 'Approved');
+            "INSERT INTO customers (id, customer_code, report_name, status) VALUES (1, 'CUST01', 'Test Customer', 'Approved');
              INSERT INTO suppliers (id, supplier_code, supplier_name, status) VALUES (1, 'SUP01', 'Test Supplier', 'Approved');
              INSERT INTO items (part_code, part_name, hsn_code, uom_code, default_gst_rate, supplier_id, status)
                 VALUES ('P01', 'Test Part', '8708.99.00', 'PCS', 18.0, 1, 'Approved');",

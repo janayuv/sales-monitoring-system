@@ -1,7 +1,7 @@
-use rusqlite::{params, Connection, OptionalExtension};
 use crate::error::AppError;
-use crate::models::database_models::{CustomerRow, SupplierRow, ItemRow, FinancialYearRow};
+use crate::models::database_models::{CustomerRow, FinancialYearRow, ItemRow, SupplierRow};
 use crate::repositories::MasterRepository;
+use rusqlite::{params, Connection, OptionalExtension};
 
 pub struct SqliteMasterRepository;
 
@@ -9,9 +9,16 @@ impl MasterRepository for SqliteMasterRepository {
     // Customers
     fn insert_customer(&self, conn: &mut Connection, row: &CustomerRow) -> Result<(), AppError> {
         conn.execute(
-            "INSERT INTO customers (customer_code, customer_name, gstin, state_code, address, status)
+            "INSERT INTO customers (customer_code, report_name, gstin, state_code, address, status)
              VALUES (?, ?, ?, ?, ?, ?)",
-            params![row.customer_code, row.customer_name, row.gstin, row.state_code, row.address, row.status],
+            params![
+                row.customer_code,
+                row.report_name,
+                row.gstin,
+                row.state_code,
+                row.address,
+                row.status
+            ],
         )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
@@ -22,9 +29,9 @@ impl MasterRepository for SqliteMasterRepository {
 
     fn update_customer(&self, conn: &mut Connection, row: &CustomerRow) -> Result<(), AppError> {
         conn.execute(
-            "UPDATE customers SET customer_name = ?, gstin = ?, state_code = ?, address = ?, status = ?
+            "UPDATE customers SET report_name = ?, gstin = ?, state_code = ?, address = ?, status = ?
              WHERE customer_code = ?",
-            params![row.customer_name, row.gstin, row.state_code, row.address, row.status, row.customer_code],
+            params![row.report_name, row.gstin, row.state_code, row.address, row.status, row.customer_code],
         )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
@@ -33,20 +40,25 @@ impl MasterRepository for SqliteMasterRepository {
         Ok(())
     }
 
-    fn find_customer(&self, conn: &Connection, code: &str) -> Result<Option<CustomerRow>, AppError> {
+    fn find_customer(
+        &self,
+        conn: &Connection,
+        code: &str,
+    ) -> Result<Option<CustomerRow>, AppError> {
         conn.query_row(
-            "SELECT id, customer_code, customer_name, gstin, state_code, address, status 
+            "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address, status
              FROM customers WHERE customer_code = ?",
             [code],
             |row| {
                 Ok(CustomerRow {
                     id: Some(row.get(0)?),
                     customer_code: row.get(1)?,
-                    customer_name: row.get(2)?,
-                    gstin: row.get(3)?,
-                    state_code: row.get(4)?,
-                    address: row.get(5)?,
-                    status: row.get(6)?,
+                    report_name: row.get(2)?,
+                    tally_customer_name: row.get(3)?,
+                    gstin: row.get(4)?,
+                    state_code: row.get(5)?,
+                    address: row.get(6)?,
+                    status: row.get(7)?,
                 })
             },
         )
@@ -57,8 +69,12 @@ impl MasterRepository for SqliteMasterRepository {
         })
     }
 
-    fn list_customers(&self, conn: &Connection, status: Option<&str>) -> Result<Vec<CustomerRow>, AppError> {
-        let mut query = "SELECT id, customer_code, customer_name, gstin, state_code, address, status FROM customers".to_string();
+    fn list_customers(
+        &self,
+        conn: &Connection,
+        status: Option<&str>,
+    ) -> Result<Vec<CustomerRow>, AppError> {
+        let mut query = "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address, status FROM customers".to_string();
         let mut params_vec: Vec<String> = Vec::new();
         if let Some(s) = status {
             query.push_str(" WHERE status = ?");
@@ -75,11 +91,12 @@ impl MasterRepository for SqliteMasterRepository {
                 Ok(CustomerRow {
                     id: Some(row.get(0)?),
                     customer_code: row.get(1)?,
-                    customer_name: row.get(2)?,
-                    gstin: row.get(3)?,
-                    state_code: row.get(4)?,
-                    address: row.get(5)?,
-                    status: row.get(6)?,
+                    report_name: row.get(2)?,
+                    tally_customer_name: row.get(3)?,
+                    gstin: row.get(4)?,
+                    state_code: row.get(5)?,
+                    address: row.get(6)?,
+                    status: row.get(7)?,
                 })
             })
             .map_err(|e| AppError::Db {
@@ -124,7 +141,11 @@ impl MasterRepository for SqliteMasterRepository {
         Ok(())
     }
 
-    fn find_supplier(&self, conn: &Connection, code: &str) -> Result<Option<SupplierRow>, AppError> {
+    fn find_supplier(
+        &self,
+        conn: &Connection,
+        code: &str,
+    ) -> Result<Option<SupplierRow>, AppError> {
         conn.query_row(
             "SELECT id, supplier_code, supplier_name, gstin, state_code, address, status 
              FROM suppliers WHERE supplier_code = ?",
@@ -148,7 +169,11 @@ impl MasterRepository for SqliteMasterRepository {
         })
     }
 
-    fn list_suppliers(&self, conn: &Connection, status: Option<&str>) -> Result<Vec<SupplierRow>, AppError> {
+    fn list_suppliers(
+        &self,
+        conn: &Connection,
+        status: Option<&str>,
+    ) -> Result<Vec<SupplierRow>, AppError> {
         let mut query = "SELECT id, supplier_code, supplier_name, gstin, state_code, address, status FROM suppliers".to_string();
         let mut params_vec: Vec<String> = Vec::new();
         if let Some(s) = status {
@@ -239,7 +264,11 @@ impl MasterRepository for SqliteMasterRepository {
         })
     }
 
-    fn list_items(&self, conn: &Connection, status: Option<&str>) -> Result<Vec<ItemRow>, AppError> {
+    fn list_items(
+        &self,
+        conn: &Connection,
+        status: Option<&str>,
+    ) -> Result<Vec<ItemRow>, AppError> {
         let mut query = "SELECT part_code, part_name, hsn_code, uom_code, default_gst_rate, supplier_id, status FROM items".to_string();
         let mut params_vec: Vec<String> = Vec::new();
         if let Some(s) = status {
