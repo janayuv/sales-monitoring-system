@@ -25,9 +25,12 @@ import { BackupMetadata } from "../types/bindings/BackupMetadata";
 import { BackupStatus } from "../types/bindings/BackupStatus";
 import { CustomerCategoryRow } from "../types/bindings/CustomerCategoryRow";
 import { CustomerMasterRow } from "../types/bindings/CustomerMasterRow";
+import { CustomerImportPreview } from "../types/bindings/CustomerImportPreview";
+import { CustomerImportResult } from "../types/bindings/CustomerImportResult";
 
 export type { CustomerCategoryRow };
 export type { CustomerMasterRow };
+export type { CustomerImportPreview, CustomerImportResult };
 
 export interface CustomerMasterPayload {
   id: number | null;
@@ -212,6 +215,20 @@ export class ApiService {
     updates: { customer_id: number; tally_name?: string | null; category_name?: string | null }[]
   ): Promise<void> {
     await invoke("bulk_update_customer_mappings", { updates });
+  }
+
+  /**
+   * Preview a customer master Excel/xlsx file against the DB without writing anything.
+   */
+  static async previewCustomerMasterImport(filePath: string): Promise<CustomerImportPreview> {
+    return await invoke<CustomerImportPreview>("preview_customer_master_import", { filePath });
+  }
+
+  /**
+   * Commit a customer master import: upserts valid rows inside one auditable transaction.
+   */
+  static async commitCustomerMasterImport(filePath: string, user: string): Promise<CustomerImportResult> {
+    return await invoke<CustomerImportResult>("commit_customer_master_import", { filePath, user });
   }
 
   // --- Phase 4: Price Revisions & Recovery Notes ---

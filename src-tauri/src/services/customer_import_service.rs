@@ -1,7 +1,11 @@
 use crate::error::AppError;
-use crate::models::domain_models::CustomerImportIssue;
+use crate::models::domain_models::{
+    CustomerImportIssue, CustomerImportPreview, CustomerImportResult,
+};
 use crate::services::import_service::cell_to_string;
+use crate::utils::hash::compute_file_hash;
 use calamine::{open_workbook_auto, Reader};
+use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -186,6 +190,262 @@ pub fn validate_row(r: &ParsedCustomerRow, exists: bool) -> Vec<CustomerImportIs
     issues
 }
 
+/// Trims a value and turns it into `None` if it's empty, otherwise `Some(trimmed)`.
+/// Used to build `COALESCE(?, col)` params so a blank cell keeps the existing DB value.
+fn opt(v: &Option<String>) -> Option<String> {
+    v.as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Inserts a new customer or updates an existing one by customer_code.
+/// On update, NULL (blank) values keep the existing column via COALESCE, so
+/// re-importing a sheet with some blank cells never destroys previously-set data.
+pub fn upsert_row(conn: &Connection, r: &ParsedCustomerRow, exists: bool) -> Result<(), AppError> {
+    let code = r
+        .code
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if exists {
+        conn.execute(
+            "UPDATE customers SET
+                report_name = COALESCE(?, report_name),
+                tally_customer_name = COALESCE(?, tally_customer_name),
+                legal_name = COALESCE(?, legal_name),
+                gstin = COALESCE(?, gstin),
+                address1 = COALESCE(?, address1),
+                address2 = COALESCE(?, address2),
+                location = COALESCE(?, location),
+                pincode = COALESCE(?, pincode),
+                state_code = COALESCE(?, state_code),
+                place_of_supply = COALESCE(?, place_of_supply),
+                phone = COALESCE(?, phone),
+                email = COALESCE(?, email),
+                remarks = COALESCE(?, remarks),
+                status = COALESCE(?, status)
+             WHERE customer_code = ?",
+            params![
+                opt(&r.report_name),
+                opt(&r.tally),
+                opt(&r.legal),
+                opt(&r.gstin),
+                opt(&r.address1),
+                opt(&r.address2),
+                opt(&r.location),
+                opt(&r.pincode),
+                opt(&r.state_code),
+                opt(&r.place_of_supply),
+                opt(&r.phone),
+                opt(&r.email),
+                opt(&r.remarks),
+                opt(&r.status),
+                code,
+            ],
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Update failed for {code}: {e}"),
+        })?;
+    } else {
+        conn.execute(
+            "INSERT INTO customers
+                (customer_code, report_name, tally_customer_name, legal_name, gstin, address1, address2,
+                 location, pincode, state_code, place_of_supply, phone, email, remarks, status)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, COALESCE(?, 'Approved'))",
+            params![
+                code,
+                opt(&r.report_name),
+                opt(&r.tally),
+                opt(&r.legal),
+                opt(&r.gstin),
+                opt(&r.address1),
+                opt(&r.address2),
+                opt(&r.location),
+                opt(&r.pincode),
+                opt(&r.state_code),
+                opt(&r.place_of_supply),
+                opt(&r.phone),
+                opt(&r.email),
+                opt(&r.remarks),
+                opt(&r.status),
+            ],
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Insert failed for {code}: {e}"),
+        })?;
+    }
+    Ok(())
+}
+
+fn code_exists(conn: &Connection, code: &str) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM customers WHERE customer_code = ?)",
+        [code],
+        |r| r.get::<_, bool>(0),
+    )
+    .unwrap_or(false)
+}
+
+/// Parses and validates a customer master sheet without writing anything to the DB.
+pub fn preview_import(
+    conn: &Connection,
+    file_path: &str,
+) -> Result<CustomerImportPreview, AppError> {
+    let rows = parse_customer_sheet(file_path)?;
+    let file_name = Path::new(file_path.trim().trim_matches('"'))
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let (mut to_insert, mut to_update) = (0u32, 0u32);
+    let (mut errors, mut warnings) = (Vec::new(), Vec::new());
+    for r in &rows {
+        let exists = r
+            .code
+            .as_ref()
+            .map(|c| code_exists(conn, c.trim()))
+            .unwrap_or(false);
+        let issues = validate_row(r, exists);
+        let has_error = issues.iter().any(|i| i.severity == "error");
+        for i in issues {
+            if i.severity == "error" {
+                errors.push(i);
+            } else {
+                warnings.push(i);
+            }
+        }
+        if has_error {
+            continue;
+        }
+        if exists {
+            to_update += 1;
+        } else {
+            to_insert += 1;
+        }
+    }
+    Ok(CustomerImportPreview {
+        file_name,
+        row_count: rows.len() as u32,
+        to_insert,
+        to_update,
+        errors,
+        warnings,
+    })
+}
+
+/// Parses, validates, and upserts a customer master sheet inside a single
+/// transaction, recording an auditable `import_batches` row and per-row
+/// `validation_exceptions`. Rejects re-import of a file already committed
+/// (matched by content hash) to prevent duplicate imports.
+pub fn commit_import(
+    conn: &mut Connection,
+    file_path: &str,
+    user: &str,
+) -> Result<CustomerImportResult, AppError> {
+    let start = std::time::Instant::now();
+    let clean = file_path.trim().trim_matches('"').trim_matches('\'');
+    let path = Path::new(clean);
+    let file_hash = compute_file_hash(path)
+        .map_err(|e| AppError::Excel(format!("Failed to hash file: {e}")))?;
+
+    let dup: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM import_batches WHERE file_hash = ? AND status = 'completed')",
+            [&file_hash],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    if dup {
+        return Err(AppError::Validation {
+            code: "ERR_CM_DUP".to_string(),
+            message: "This file was already imported.".to_string(),
+        });
+    }
+
+    let rows = parse_customer_sheet(clean)?;
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let file_size = std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0);
+
+    let tx = conn.transaction().map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to begin import tx: {e}"),
+    })?;
+
+    tx.execute(
+        "INSERT INTO import_batches (source_type, file_name, file_size_bytes, file_hash, row_count, imported_by, status)
+         VALUES ('customer_master', ?, ?, ?, ?, ?, 'staged')",
+        params![file_name, file_size, file_hash, rows.len() as i64, user],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to create batch: {e}"),
+    })?;
+    let batch_id = tx.last_insert_rowid();
+
+    let (mut inserted, mut updated, mut skipped, mut warning_count) = (0u32, 0u32, 0u32, 0u32);
+    let mut errors = Vec::new();
+
+    for r in &rows {
+        let exists = r
+            .code
+            .as_ref()
+            .map(|c| code_exists(&tx, c.trim()))
+            .unwrap_or(false);
+        let issues = validate_row(r, exists);
+        for i in &issues {
+            tx.execute(
+                "INSERT INTO validation_exceptions (level, batch_id, row_no, invoice_no, severity, exception_type, field_name, expected_value, actual_value)
+                 VALUES ('row', ?, ?, NULL, ?, 'customer_master', NULL, NULL, ?)",
+                params![batch_id, i.row_no, i.severity, i.message],
+            )
+            .ok();
+            if i.severity == "warning" {
+                warning_count += 1;
+            }
+        }
+        if issues.iter().any(|i| i.severity == "error") {
+            skipped += 1;
+            errors.extend(issues.into_iter().filter(|i| i.severity == "error"));
+            continue;
+        }
+        upsert_row(&tx, r, exists)?;
+        if exists {
+            updated += 1;
+        } else {
+            inserted += 1;
+        }
+    }
+
+    let duration = start.elapsed().as_millis() as i64;
+    tx.execute(
+        "UPDATE import_batches SET success_count=?, warning_count=?, error_count=?, duration_ms=?, status='completed' WHERE id=?",
+        params![(inserted + updated) as i64, warning_count as i64, skipped as i64, duration, batch_id],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to finalize batch: {e}"),
+    })?;
+
+    tx.commit().map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to commit import: {e}"),
+    })?;
+
+    Ok(CustomerImportResult {
+        batch_id,
+        inserted,
+        updated,
+        skipped,
+        errors,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +577,74 @@ mod tests {
         assert_eq!(row.report_name, Some("Report Co".to_string()));
         assert_eq!(row.gstin, Some("33AAACH2364M1ZM".to_string()));
         assert_eq!(row.row_no, 2);
+    }
+
+    // --- upsert_row coverage -------------------------------------------------
+
+    use crate::database::migrate::run_migrations;
+    use rusqlite::Connection;
+
+    fn db() -> Connection {
+        let mut c = Connection::open_in_memory().unwrap();
+        run_migrations(&mut c).unwrap();
+        c
+    }
+
+    #[test]
+    fn upsert_inserts_new_then_updates_keeping_blanks() {
+        let conn = db();
+
+        let insert_row = ParsedCustomerRow {
+            row_no: 2,
+            code: Some("C1".into()),
+            report_name: Some("First Name".into()),
+            tally: Some("Tally One".into()),
+            legal: None,
+            gstin: Some("33AAACH2364M1ZM".into()),
+            address1: Some("Addr 1".into()),
+            address2: None,
+            location: None,
+            pincode: None,
+            state_code: Some("33".into()),
+            place_of_supply: None,
+            phone: None,
+            email: None,
+            status: None,
+            remarks: None,
+        };
+        upsert_row(&conn, &insert_row, false).unwrap();
+
+        // Update with blank report_name + blank gstin -> must keep existing values.
+        let update_row = ParsedCustomerRow {
+            row_no: 3,
+            code: Some("C1".into()),
+            report_name: None,
+            tally: Some("Tally CHANGED".into()),
+            legal: None,
+            gstin: None,
+            address1: None,
+            address2: None,
+            location: Some("CityX".into()),
+            pincode: None,
+            state_code: None,
+            place_of_supply: None,
+            phone: None,
+            email: None,
+            status: None,
+            remarks: None,
+        };
+        upsert_row(&conn, &update_row, true).unwrap();
+
+        let (name, tally, gstin, location): (String, String, String, String) = conn
+            .query_row(
+                "SELECT report_name, tally_customer_name, gstin, location FROM customers WHERE customer_code='C1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "First Name", "blank report_name must keep existing");
+        assert_eq!(gstin, "33AAACH2364M1ZM", "blank gstin must keep existing");
+        assert_eq!(tally, "Tally CHANGED", "provided value overwrites");
+        assert_eq!(location, "CityX", "new value fills previously-null column");
     }
 }
