@@ -90,3 +90,36 @@ pub fn export_customer_master_template(output_path: String) -> Result<(), AppErr
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::import_service::cell_to_string;
+    use calamine::{open_workbook_auto, Reader};
+
+    #[test]
+    fn template_writes_xlsx_with_expected_header_row() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("cm_template_test_{}.xlsx", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+
+        export_customer_master_template(path_str.clone()).expect("template should write");
+        assert!(path.exists(), "template .xlsx should exist on disk");
+
+        let mut wb = open_workbook_auto(&path).expect("should open written workbook");
+        let sheet = wb.sheet_names()[0].clone();
+        let range = wb.worksheet_range(&sheet).expect("should read sheet");
+        let header: Vec<String> = range
+            .rows()
+            .next()
+            .expect("header row present")
+            .iter()
+            .map(cell_to_string)
+            .collect();
+
+        let expected: Vec<String> = TEMPLATE_HEADERS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(header, expected, "row 1 must be the 15 canonical headers");
+
+        std::fs::remove_file(&path).ok();
+    }
+}
