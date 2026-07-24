@@ -67,7 +67,6 @@ pub fn run() {
             commands::customer_commands::delete_customer_category,
             commands::customer_commands::create_customer_master,
             commands::customer_commands::update_customer_master,
-            commands::customer_commands::bulk_update_customer_mappings,
             commands::customer_import_commands::preview_customer_master_import,
             commands::customer_import_commands::commit_customer_master_import,
             // Phase 6: Maintenance & Backup

@@ -209,15 +209,6 @@ export class ApiService {
   }
 
   /**
-   * Bulk update customer Tally names & categories.
-   */
-  static async bulkUpdateCustomerMappings(
-    updates: { customer_id: number; tally_name?: string | null; category_name?: string | null }[]
-  ): Promise<void> {
-    await invoke("bulk_update_customer_mappings", { updates });
-  }
-
-  /**
    * Preview a customer master Excel/xlsx file against the DB without writing anything.
    */
   static async previewCustomerMasterImport(filePath: string): Promise<CustomerImportPreview> {

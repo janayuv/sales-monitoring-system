@@ -425,55 +425,6 @@ pub fn update_customer_master(
     Ok(())
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CustomerMappingUpdatePayload {
-    pub customer_id: i64,
-    pub tally_name: Option<String>,
-    pub category_name: Option<String>,
-}
-
-/// Bulk update customer mappings (Tally name & Category name).
-#[tauri::command]
-pub fn bulk_update_customer_mappings(
-    state: State<'_, DbState>,
-    updates: Vec<CustomerMappingUpdatePayload>,
-) -> Result<(), AppError> {
-    let conn_guard = state
-        .conn
-        .lock()
-        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
-    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
-        code: "ERR_DB_002".to_string(),
-        message: "No active database connection profile".to_string(),
-    })?;
-
-    for item in updates {
-        let tally_val = item
-            .tally_name
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        let category_val = item
-            .category_name
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        conn.execute(
-            "UPDATE customers SET tally_customer_name = ?, category_name = ? WHERE id = ?",
-            rusqlite::params![tally_val, category_val, item.customer_id],
-        )
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to update customer ID {}: {}", item.customer_id, e),
-        })?;
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
