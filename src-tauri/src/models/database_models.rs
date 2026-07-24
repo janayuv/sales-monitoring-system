@@ -87,7 +87,7 @@ pub struct CustomerRow {
     pub tally_customer_name: Option<String>,
     pub gstin: Option<String>,
     pub state_code: Option<String>,
-    pub address: Option<String>,
+    pub address1: Option<String>,
     pub status: String,
 }
 

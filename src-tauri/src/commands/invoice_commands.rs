@@ -374,7 +374,7 @@ pub fn get_customers_list(state: State<'_, DbState>) -> Result<Vec<CustomerRow>,
     })?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address, status FROM customers ORDER BY report_name ASC"
+        "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address1, status FROM customers ORDER BY report_name ASC"
     ).map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
         message: format!("Failed to prepare query: {}", e),
@@ -389,7 +389,7 @@ pub fn get_customers_list(state: State<'_, DbState>) -> Result<Vec<CustomerRow>,
                 tally_customer_name: row.get(3)?,
                 gstin: row.get(4)?,
                 state_code: row.get(5)?,
-                address: row.get(6)?,
+                address1: row.get(6)?,
                 status: row.get(7)?,
             })
         })

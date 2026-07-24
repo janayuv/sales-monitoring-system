@@ -9,14 +9,14 @@ impl MasterRepository for SqliteMasterRepository {
     // Customers
     fn insert_customer(&self, conn: &mut Connection, row: &CustomerRow) -> Result<(), AppError> {
         conn.execute(
-            "INSERT INTO customers (customer_code, report_name, gstin, state_code, address, status)
+            "INSERT INTO customers (customer_code, report_name, gstin, state_code, address1, status)
              VALUES (?, ?, ?, ?, ?, ?)",
             params![
                 row.customer_code,
                 row.report_name,
                 row.gstin,
                 row.state_code,
-                row.address,
+                row.address1,
                 row.status
             ],
         )
@@ -29,9 +29,9 @@ impl MasterRepository for SqliteMasterRepository {
 
     fn update_customer(&self, conn: &mut Connection, row: &CustomerRow) -> Result<(), AppError> {
         conn.execute(
-            "UPDATE customers SET report_name = ?, gstin = ?, state_code = ?, address = ?, status = ?
+            "UPDATE customers SET report_name = ?, gstin = ?, state_code = ?, address1 = ?, status = ?
              WHERE customer_code = ?",
-            params![row.report_name, row.gstin, row.state_code, row.address, row.status, row.customer_code],
+            params![row.report_name, row.gstin, row.state_code, row.address1, row.status, row.customer_code],
         )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
@@ -46,7 +46,7 @@ impl MasterRepository for SqliteMasterRepository {
         code: &str,
     ) -> Result<Option<CustomerRow>, AppError> {
         conn.query_row(
-            "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address, status
+            "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address1, status
              FROM customers WHERE customer_code = ?",
             [code],
             |row| {
@@ -57,7 +57,7 @@ impl MasterRepository for SqliteMasterRepository {
                     tally_customer_name: row.get(3)?,
                     gstin: row.get(4)?,
                     state_code: row.get(5)?,
-                    address: row.get(6)?,
+                    address1: row.get(6)?,
                     status: row.get(7)?,
                 })
             },
@@ -74,7 +74,7 @@ impl MasterRepository for SqliteMasterRepository {
         conn: &Connection,
         status: Option<&str>,
     ) -> Result<Vec<CustomerRow>, AppError> {
-        let mut query = "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address, status FROM customers".to_string();
+        let mut query = "SELECT id, customer_code, report_name, tally_customer_name, gstin, state_code, address1, status FROM customers".to_string();
         let mut params_vec: Vec<String> = Vec::new();
         if let Some(s) = status {
             query.push_str(" WHERE status = ?");
@@ -95,7 +95,7 @@ impl MasterRepository for SqliteMasterRepository {
                     tally_customer_name: row.get(3)?,
                     gstin: row.get(4)?,
                     state_code: row.get(5)?,
-                    address: row.get(6)?,
+                    address1: row.get(6)?,
                     status: row.get(7)?,
                 })
             })
@@ -356,5 +356,35 @@ impl MasterRepository for SqliteMasterRepository {
             code: "ERR_DB_003".to_string(),
             message: format!("Failed to query active financial year: {}", e),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::migrate::run_migrations;
+
+    // Regression test for the v4 migration renaming customers.address -> address1.
+    // Prior to the fix, list_customers (and the other customer methods) still
+    // referenced the dropped `address` column and would fail at runtime with
+    // "no such column: address" against a freshly migrated database.
+    #[test]
+    fn list_customers_reads_address1_after_v4_migration() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO customers (customer_code, report_name, address1, status)
+             VALUES ('C1', 'Report Co', 'Addr One', 'Approved')",
+            [],
+        )
+        .unwrap();
+
+        let repo = SqliteMasterRepository;
+        let customers = repo.list_customers(&conn, None).unwrap();
+
+        assert_eq!(customers.len(), 1);
+        assert_eq!(customers[0].report_name, "Report Co");
+        assert_eq!(customers[0].address1, Some("Addr One".to_string()));
     }
 }
