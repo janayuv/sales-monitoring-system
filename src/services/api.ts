@@ -222,6 +222,13 @@ export class ApiService {
     return await invoke<CustomerImportResult>("commit_customer_master_import", { filePath, user });
   }
 
+  /**
+   * Write a blank customer master import template (.xlsx) with the expected header row.
+   */
+  static async exportCustomerMasterTemplate(outputPath: string): Promise<void> {
+    await invoke("export_customer_master_template", { outputPath });
+  }
+
   // --- Phase 4: Price Revisions & Recovery Notes ---
 
   /**

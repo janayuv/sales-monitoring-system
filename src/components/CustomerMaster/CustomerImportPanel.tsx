@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { ApiService } from "../../services/api";
 import { CustomerImportPreview } from "../../types/bindings/CustomerImportPreview";
 
@@ -29,6 +29,23 @@ export default function CustomerImportPanel({ onClose, onImported }: Props) {
     }
   };
 
+  const downloadTemplate = async () => {
+    const path = await save({
+      defaultPath: "customer_master_template.xlsx",
+      filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
+    });
+    if (!path) return;
+    setBusy(true);
+    try {
+      await ApiService.exportCustomerMasterTemplate(path);
+      alert(`Template saved to:\n${path}`);
+    } catch (err: any) {
+      alert(`Failed to save template: ${err.message || err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const commit = async () => {
     setBusy(true);
     try {
@@ -46,7 +63,10 @@ export default function CustomerImportPanel({ onClose, onImported }: Props) {
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="w-[520px] bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-lg font-bold text-slate-100">Import Customer Master</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold text-slate-100">Import Customer Master</h3>
+          <button onClick={downloadTemplate} disabled={busy} className="text-indigo-400 hover:text-indigo-300 text-xs font-semibold disabled:opacity-50">↓ Download template (.xlsx)</button>
+        </div>
         <button onClick={pick} className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2 rounded-lg">Select Excel / CSV…</button>
         {filePath && <p className="text-[11px] text-slate-500 truncate">{filePath}</p>}
         {busy && <p className="text-xs text-indigo-400">Working…</p>}

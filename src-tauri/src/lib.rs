@@ -69,6 +69,7 @@ pub fn run() {
             commands::customer_commands::update_customer_master,
             commands::customer_import_commands::preview_customer_master_import,
             commands::customer_import_commands::commit_customer_master_import,
+            commands::customer_import_commands::export_customer_master_template,
             // Phase 6: Maintenance & Backup
             commands::maintenance_commands::check_db_integrity,
             commands::maintenance_commands::vacuum_database,
