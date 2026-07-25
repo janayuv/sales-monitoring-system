@@ -1,3 +1,4 @@
+pub mod company_commands;
 pub mod customer_commands;
 pub mod customer_import_commands;
 pub mod export_commands;

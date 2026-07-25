@@ -77,6 +77,9 @@ pub fn run() {
             commands::maintenance_commands::get_backup_status,
             commands::maintenance_commands::get_app_setting,
             commands::maintenance_commands::set_app_setting,
+            // Company Profile
+            commands::company_commands::get_company_profile,
+            commands::company_commands::save_company_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

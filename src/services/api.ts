@@ -27,7 +27,9 @@ import { CustomerCategoryRow } from "../types/bindings/CustomerCategoryRow";
 import { CustomerMasterRow } from "../types/bindings/CustomerMasterRow";
 import { CustomerImportPreview } from "../types/bindings/CustomerImportPreview";
 import { CustomerImportResult } from "../types/bindings/CustomerImportResult";
+import { CompanyProfileRow } from "../types/bindings/CompanyProfileRow";
 
+export type { CompanyProfileRow };
 export type { CustomerCategoryRow };
 export type { CustomerMasterRow };
 export type { CustomerImportPreview, CustomerImportResult };
@@ -50,6 +52,21 @@ export interface CustomerMasterPayload {
   category_name: string | null;
   remarks: string | null;
   status: "Approved" | "Pending_Review";
+}
+
+export interface CompanyProfilePayload {
+  company_name: string | null;
+  legal_name: string | null;
+  gstin: string | null;
+  pan: string | null;
+  address1: string | null;
+  address2: string | null;
+  location: string | null;
+  pincode: string | null;
+  state_code: string | null;
+  phone: string | null;
+  email: string | null;
+  logo: string | null;
 }
 
 export class ApiService {
@@ -507,5 +524,19 @@ export class ApiService {
    */
   static async setAppSetting(settingKey: string, settingValue: string): Promise<void> {
     await invoke("set_app_setting", { settingKey, settingValue });
+  }
+
+  /**
+   * Fetch the single company profile row, or empty defaults if unset.
+   */
+  static async getCompanyProfile(): Promise<CompanyProfileRow> {
+    return await invoke<CompanyProfileRow>("get_company_profile");
+  }
+
+  /**
+   * Insert or update the single company profile row.
+   */
+  static async saveCompanyProfile(payload: CompanyProfilePayload): Promise<void> {
+    await invoke("save_company_profile", { payload });
   }
 }

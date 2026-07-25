@@ -178,3 +178,21 @@ pub struct CustomerImportResult {
     pub skipped: u32,
     pub errors: Vec<CustomerImportIssue>,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CompanyProfileRow.ts")]
+pub struct CompanyProfileRow {
+    pub id: i64,
+    pub company_name: Option<String>,
+    pub legal_name: Option<String>,
+    pub gstin: Option<String>,
+    pub pan: Option<String>,
+    pub address1: Option<String>,
+    pub address2: Option<String>,
+    pub location: Option<String>,
+    pub pincode: Option<String>,
+    pub state_code: Option<String>,
+    pub phone: Option<String>,
+    pub email: Option<String>,
+    pub logo: Option<String>,
+}
