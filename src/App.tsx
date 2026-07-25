@@ -48,6 +48,7 @@ import { MaintenanceResult } from "./types/bindings/MaintenanceResult";
 import { BackupStatus } from "./types/bindings/BackupStatus";
 import DashboardKpis from "./components/DashboardKpis";
 import CustomerMasterTab from "./components/CustomerMaster/CustomerMasterTab";
+import CompanyProfileForm from "./components/CompanySettings/CompanyProfileForm";
 
 function App() {
   // Navigation & Core States
@@ -1992,6 +1993,8 @@ function App() {
                   )}
                 </div>
               </div>
+
+              <CompanyProfileForm />
 
               {/* Tally Register Code Card */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
