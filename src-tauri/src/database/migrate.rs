@@ -130,6 +130,29 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 ALTER TABLE import_batches_new RENAME TO import_batches;
             ",
         },
+        Migration {
+            version: 6,
+            description: "Add company_profile single-row table (company GST master)",
+            rebuild: false,
+            sql: "
+                CREATE TABLE IF NOT EXISTS company_profile (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    company_name TEXT,
+                    legal_name   TEXT,
+                    gstin        TEXT,
+                    pan          TEXT,
+                    address1     TEXT,
+                    address2     TEXT,
+                    location     TEXT,
+                    pincode      TEXT,
+                    state_code   TEXT,
+                    phone        TEXT,
+                    email        TEXT,
+                    logo         TEXT,
+                    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+            ",
+        },
     ];
 
     // 4. Apply migrations sequentially
@@ -401,5 +424,47 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cnt, 1);
+    }
+
+    #[test]
+    fn v6_company_profile_table_is_single_row() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        // Columns exist.
+        let cols = columns(&conn, "company_profile");
+        for expected in [
+            "company_name",
+            "legal_name",
+            "gstin",
+            "pan",
+            "address1",
+            "address2",
+            "location",
+            "pincode",
+            "state_code",
+            "phone",
+            "email",
+            "logo",
+        ] {
+            assert!(
+                cols.contains(&expected.to_string()),
+                "missing column {expected}"
+            );
+        }
+
+        // Row 1 inserts fine.
+        conn.execute(
+            "INSERT INTO company_profile (id, company_name) VALUES (1, 'Acme')",
+            [],
+        )
+        .expect("id=1 row should insert");
+
+        // A second row (id != 1) is rejected by the CHECK constraint.
+        let second = conn.execute(
+            "INSERT INTO company_profile (id, company_name) VALUES (2, 'Other')",
+            [],
+        );
+        assert!(second.is_err(), "CHECK(id=1) must reject a second row");
     }
 }
