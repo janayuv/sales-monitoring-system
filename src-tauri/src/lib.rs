@@ -80,6 +80,7 @@ pub fn run() {
             // Company Profile
             commands::company_commands::get_company_profile,
             commands::company_commands::save_company_profile,
+            commands::company_commands::read_logo_as_data_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

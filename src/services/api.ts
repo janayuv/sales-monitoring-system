@@ -539,4 +539,12 @@ export class ApiService {
   static async saveCompanyProfile(payload: CompanyProfilePayload): Promise<void> {
     await invoke("save_company_profile", { payload });
   }
+
+  /**
+   * Read a picked image file and return it as a base64 `data:` URL.
+   * Enforces a 512 KB cap and an image-extension allowlist server-side.
+   */
+  static async readLogoAsDataUrl(filePath: string): Promise<string> {
+    return await invoke<string>("read_logo_as_data_url", { filePath });
+  }
 }

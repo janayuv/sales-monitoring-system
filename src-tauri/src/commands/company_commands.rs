@@ -1,7 +1,9 @@
 use crate::error::AppError;
 use crate::models::domain_models::CompanyProfileRow;
 use crate::state::DbState;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tauri::State;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -171,6 +173,53 @@ pub fn save_company_profile(
     Ok(())
 }
 
+const MAX_LOGO_BYTES: u64 = 512 * 1024;
+
+/// Reads a picked image file and returns a base64 `data:` URL. Enforces a
+/// 512 KB cap and an image-extension allowlist (the size guard lives here so it
+/// cannot be bypassed from the UI).
+#[tauri::command]
+pub fn read_logo_as_data_url(file_path: String) -> Result<String, AppError> {
+    let clean = file_path.trim().trim_matches('"').trim_matches('\'');
+    let path = Path::new(clean);
+
+    let meta = std::fs::metadata(path).map_err(|e| AppError::Validation {
+        code: "ERR_VAL_001".to_string(),
+        message: format!("Cannot read image: {e}"),
+    })?;
+    if meta.len() > MAX_LOGO_BYTES {
+        return Err(AppError::Validation {
+            code: "ERR_VAL_001".to_string(),
+            message: "Logo must be under 512 KB".to_string(),
+        });
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => {
+            return Err(AppError::Validation {
+                code: "ERR_VAL_001".to_string(),
+                message: "Unsupported image type (use png, jpg, gif, webp, or svg)".to_string(),
+            })
+        }
+    };
+
+    let bytes = std::fs::read(path).map_err(|e| AppError::Validation {
+        code: "ERR_VAL_001".to_string(),
+        message: format!("Cannot read image: {e}"),
+    })?;
+    Ok(format!("data:{};base64,{}", mime, STANDARD.encode(bytes)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +361,41 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1, "must stay a single row");
         assert_eq!(name2, "Acme Renamed");
+    }
+
+    #[test]
+    fn logo_reads_small_png_as_data_url() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("cp_logo_{}.png", std::process::id()));
+        std::fs::write(&path, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).unwrap();
+
+        let url = read_logo_as_data_url(path.to_string_lossy().to_string()).unwrap();
+        assert!(url.starts_with("data:image/png;base64,"), "got {url}");
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn logo_rejects_unsupported_extension() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("cp_logo_{}.txt", std::process::id()));
+        std::fs::write(&path, b"hello").unwrap();
+
+        let res = read_logo_as_data_url(path.to_string_lossy().to_string());
+        assert!(res.is_err(), "non-image extension must be rejected");
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn logo_rejects_oversized_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("cp_logo_big_{}.png", std::process::id()));
+        std::fs::write(&path, vec![0u8; 600 * 1024]).unwrap(); // 600 KB > 512 KB cap
+
+        let res = read_logo_as_data_url(path.to_string_lossy().to_string());
+        assert!(res.is_err(), "files over 512 KB must be rejected");
+
+        std::fs::remove_file(&path).ok();
     }
 }
