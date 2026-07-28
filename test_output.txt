@@ -1,0 +1,11 @@
+
+running 1 test
+test commands::export_commands::tests::test_inspect_cn_57911 ... FAILED
+
+failures:
+
+failures:
+    commands::export_commands::tests::test_inspect_cn_57911
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 95 filtered out; finished in 6.05s
+

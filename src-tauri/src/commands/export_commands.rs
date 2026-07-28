@@ -932,6 +932,10 @@ fn format_state_code(code: &str) -> String {
     }
 }
 
+fn round_to_two(val: f64) -> f64 {
+    (val * 100.0).round() / 100.0
+}
+
 fn format_date_to_einvoice(db_date: &str) -> String {
     // db_date format: YYYY-MM-DD
     let parts: Vec<&str> = db_date.split('-').collect();
@@ -1180,7 +1184,12 @@ pub fn export_credit_notes_einvoice_json(
             message: format!("Failed to parse credit note row: {}", e),
         })?;
 
-        let cust_gstin = cust_gstin_opt.unwrap_or_default();
+        let cust_gstin_raw = cust_gstin_opt.unwrap_or_default();
+        let cust_gstin = if cust_gstin_raw.trim().is_empty() {
+            "URP".to_string()
+        } else {
+            cust_gstin_raw.trim().to_uppercase()
+        };
         let cust_state_raw = cust_state_opt.unwrap_or_else(|| {
             if cust_gstin.len() >= 2 {
                 cust_gstin[0..2].to_string()
@@ -1283,23 +1292,25 @@ pub fn export_credit_notes_einvoice_json(
                 cgst_rate + sgst_rate
             };
 
+            let hsn_cd_clean: String = hsn_code.chars().filter(|c| c.is_ascii_digit()).collect();
+
             let item = crate::models::einvoice_models::EInvoiceItem {
                 sl_no: sl_no_counter.to_string(),
                 prd_desc: part_name,
                 is_servc: is_servc.to_string(),
-                hsn_cd: hsn_code,
+                hsn_cd: hsn_cd_clean,
                 qty: quantity,
                 free_qty: 0.0,
                 unit: uom_code,
-                unit_price: rate_pre_unit,
-                tot_amt: quantity * rate_pre_unit,
+                unit_price: round_to_two(rate_pre_unit),
+                tot_amt: round_to_two(quantity * rate_pre_unit),
                 discount: 0.0,
-                pre_tax_val: assessable_value,
-                ass_amt: assessable_value,
-                gst_rt,
-                igst_amt: igst_amount,
-                cgst_amt: cgst_amount,
-                sgst_amt: sgst_amount,
+                pre_tax_val: round_to_two(assessable_value),
+                ass_amt: round_to_two(assessable_value),
+                gst_rt: round_to_two(gst_rt),
+                igst_amt: round_to_two(igst_amount),
+                cgst_amt: round_to_two(cgst_amount),
+                sgst_amt: round_to_two(sgst_amount),
                 ces_rt: 0.0,
                 ces_amt: 0.0,
                 ces_non_advl_amt: 0.0,
@@ -1307,7 +1318,7 @@ pub fn export_credit_notes_einvoice_json(
                 state_ces_amt: 0.0,
                 state_ces_non_advl_amt: 0.0,
                 oth_chrg: 0.0,
-                tot_item_val: tot_val,
+                tot_item_val: round_to_two(tot_val),
             };
 
             item_list.push(item);
@@ -1356,16 +1367,16 @@ pub fn export_credit_notes_einvoice_json(
                 em: None,
             },
             val_dtls: crate::models::einvoice_models::ValDtls {
-                ass_val: total_taxable,
-                igst_val: total_igst,
-                cgst_val: total_cgst,
-                sgst_val: total_sgst,
+                ass_val: round_to_two(total_taxable),
+                igst_val: round_to_two(total_igst),
+                cgst_val: round_to_two(total_cgst),
+                sgst_val: round_to_two(total_sgst),
                 ces_val: 0.0,
                 st_ces_val: 0.0,
                 discount: 0.0,
                 oth_chrg: 0.0,
                 rnd_off_amt: 0.0,
-                tot_inv_val: total_value,
+                tot_inv_val: round_to_two(total_value),
             },
             ref_dtls,
             item_list,
@@ -1399,5 +1410,43 @@ pub fn export_credit_notes_einvoice_json(
         row_count: count as u32,
         message: format!("Successfully exported {} Credit Notes to E-Invoice JSON format", count),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_round_to_two() {
+        assert_eq!(round_to_two(8323.0344), 8323.03);
+        assert_eq!(round_to_two(8323.0356), 8323.04);
+        assert_eq!(round_to_two(64349.759999999995), 64349.76);
+    }
+
+    #[test]
+    fn test_hsn_cleaning() {
+        let raw_hsn = "8708.99.00";
+        let cleaned: String = raw_hsn.chars().filter(|c| c.is_ascii_digit()).collect();
+        assert_eq!(cleaned, "87089900");
+    }
+
+    #[test]
+    fn test_gstin_urp_default() {
+        let raw_gstin = "";
+        let gstin = if raw_gstin.trim().is_empty() {
+            "URP".to_string()
+        } else {
+            raw_gstin.trim().to_uppercase()
+        };
+        assert_eq!(gstin, "URP");
+
+        let raw_gstin_whitespace = "   ";
+        let gstin_whitespace = if raw_gstin_whitespace.trim().is_empty() {
+            "URP".to_string()
+        } else {
+            raw_gstin_whitespace.trim().to_uppercase()
+        };
+        assert_eq!(gstin_whitespace, "URP");
+    }
 }
 

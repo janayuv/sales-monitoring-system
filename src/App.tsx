@@ -27,7 +27,9 @@ import {
   BarChart3,
   PieChart,
   Users,
-  Info
+  Info,
+  RotateCcw,
+  LayoutGrid
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { ImportPreview } from "./types/bindings/ImportPreview";
@@ -50,6 +52,8 @@ import { useUpdaterScheduler } from "./hooks/useUpdater";
 import { UpdateCard } from "./components/updater/UpdateCard";
 import { UpdateDialog } from "./components/updater/UpdateDialog";
 import { AboutDialog } from "./components/updater/AboutDialog";
+import { ThemeToggle } from "./components/ThemeToggle";
+import DraggableCard, { CardLayoutConfig } from "./components/DraggableCard";
 
 // App component state
 // ... (omitting other states for readability in snippet, but they follow)
@@ -139,6 +143,71 @@ function App() {
   const [topItems, setTopItems] = useState<RankingRow[]>([]);
   const [loadingReports, setLoadingReports] = useState(false);
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
+
+  // Settings layout persistence & drag state
+  const SETTINGS_STORAGE_KEY = "ember-settings-layout";
+  const DEFAULT_SETTINGS_LAYOUT: CardLayoutConfig[] = [
+    { id: "company_profile", colSpan: 3 },
+    { id: "db_switcher", colSpan: 1 },
+    { id: "tally_code", colSpan: 1 },
+    { id: "db_maintenance", colSpan: 1 },
+    { id: "backup_manager", colSpan: 1 },
+    { id: "app_updater", colSpan: 1 },
+  ];
+
+  const [settingsLayout, setSettingsLayout] = useState<CardLayoutConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return DEFAULT_SETTINGS_LAYOUT;
+  });
+
+  const [draggedSettingsId, setDraggedSettingsId] = useState<string | null>(null);
+
+  const saveSettingsLayout = (newLayout: CardLayoutConfig[]) => {
+    setSettingsLayout(newLayout);
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(newLayout));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const resetSettingsLayout = () => {
+    saveSettingsLayout(DEFAULT_SETTINGS_LAYOUT);
+  };
+
+  const handleSettingsColSpanChange = (id: string, newSpan: 1 | 2 | 3) => {
+    const updated = settingsLayout.map((item) => (item.id === id ? { ...item, colSpan: newSpan } : item));
+    saveSettingsLayout(updated);
+  };
+
+  const handleSettingsDragStart = (id: string) => {
+    setDraggedSettingsId(id);
+  };
+
+  const handleSettingsDrop = (targetId: string) => {
+    if (!draggedSettingsId || draggedSettingsId === targetId) {
+      setDraggedSettingsId(null);
+      return;
+    }
+    const draggedIdx = settingsLayout.findIndex((item) => item.id === draggedSettingsId);
+    const targetIdx = settingsLayout.findIndex((item) => item.id === targetId);
+
+    if (draggedIdx !== -1 && targetIdx !== -1) {
+      const newLayout = [...settingsLayout];
+      const [removed] = newLayout.splice(draggedIdx, 1);
+      newLayout.splice(targetIdx, 0, removed);
+      saveSettingsLayout(newLayout);
+    }
+    setDraggedSettingsId(null);
+  };
 
   // Maintenance & Backup & App Settings States
   const [maintenanceResult, setMaintenanceResult] = useState<MaintenanceResult | null>(null);
@@ -722,123 +791,62 @@ function App() {
   });
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
+    <div className="flex h-screen bg-[var(--ember-bg)] text-[var(--ember-text-primary)] font-sans overflow-hidden transition-colors duration-200">
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between z-10">
+      <aside className="w-64 bg-[var(--ember-sidebar-bg)] border-r border-[var(--ember-border)] flex flex-col justify-between z-10 select-none">
         <div>
           {/* Logo Header */}
-          <div className="h-16 flex items-center px-6 border-b border-slate-800 gap-3">
-            <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
+          <div className="h-16 flex items-center px-6 border-b border-[var(--ember-border)] gap-3">
+            <div className="p-2 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-lg">
               <TrendingUp className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-sm font-bold tracking-wide uppercase text-indigo-400">Sales Monitor</h1>
-              <p className="text-[10px] text-slate-400">Offline ERP Matcher</p>
+              <h1 className="text-sm font-bold font-serif tracking-wide uppercase text-[var(--ember-primary)]">Sales Monitor</h1>
+              <p className="text-[10px] text-[var(--ember-text-muted)]">Offline ERP Matcher</p>
             </div>
           </div>
 
           {/* Nav Items */}
           <nav className="p-4 space-y-1">
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "dashboard"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4" />
-              Dashboard
-            </button>
-            <button
-              onClick={() => setActiveTab("registers")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "registers"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              Outward Registers
-            </button>
-            <button
-              onClick={() => setActiveTab("customer_matching")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "customer_matching"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              Customer Master
-            </button>
-            <button
-              onClick={() => setActiveTab("revisions")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "revisions"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <Percent className="w-4 h-4" />
-              Price Revisions
-            </button>
-            <button
-              onClick={() => setActiveTab("notes")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "notes"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <Tag className="w-4 h-4" />
-              Adjustment Notes
-            </button>
-            <button
-              onClick={() => setActiveTab("reports")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "reports"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" />
-              Reports & Export
-            </button>
-            <button
-              onClick={() => setActiveTab("import")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "import"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <FileUp className="w-4 h-4" />
-              Import Wizard
-            </button>
-            <button
-              onClick={() => setActiveTab("settings")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-200 ${
-                activeTab === "settings"
-                  ? "bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              Company Settings
-            </button>
+            {[
+              { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+              { id: "registers", label: "Outward Registers", icon: FileSpreadsheet },
+              { id: "customer_matching", label: "Customer Master", icon: Users },
+              { id: "revisions", label: "Price Revisions", icon: Percent },
+              { id: "notes", label: "Adjustment Notes", icon: Tag },
+              { id: "reports", label: "Reports & Export", icon: BarChart3 },
+              { id: "import", label: "Import Wizard", icon: FileUp },
+              { id: "settings", label: "Company Settings", icon: Settings },
+            ].map((nav) => {
+              const Icon = nav.icon;
+              const isActive = activeTab === nav.id;
+              return (
+                <button
+                  key={nav.id}
+                  onClick={() => setActiveTab(nav.id as any)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-all duration-150 cursor-pointer ${
+                    isActive
+                      ? "border-l-4 border-[var(--ember-primary)] bg-[var(--ember-surface-raised)] text-[var(--ember-primary)] font-semibold shadow-sm"
+                      : "text-[var(--ember-text-secondary)] hover:bg-[var(--ember-surface-raised)] hover:text-[var(--ember-text-primary)]"
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 ${isActive ? "text-[var(--ember-primary)]" : "text-[var(--ember-text-muted)]"}`} />
+                  {nav.label}
+                </button>
+              );
+            })}
             <button
               onClick={() => setIsAboutOpen(true)}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm text-slate-400 hover:bg-slate-800/50 hover:text-slate-100 transition-all duration-200"
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm text-[var(--ember-text-secondary)] hover:bg-[var(--ember-surface-raised)] hover:text-[var(--ember-text-primary)] transition-all duration-150 cursor-pointer"
             >
-              <Info className="w-4 h-4 text-indigo-400" />
+              <Info className="w-4 h-4 text-[var(--ember-primary)]" />
               About Application
             </button>
           </nav>
         </div>
 
         {/* Database Status Panel */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/40">
+        <div className="p-4 border-t border-[var(--ember-border)] bg-[var(--ember-surface)]">
           <div className="flex items-center gap-3">
             <div
               className={`w-2.5 h-2.5 rounded-full animate-pulse ${
@@ -846,17 +854,17 @@ function App() {
               }`}
             />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-slate-200 truncate">
+              <p className="text-xs font-semibold text-[var(--ember-text-primary)] truncate font-mono">
                 {isConnected ? `company_${companyCode}.db` : "Disconnected"}
               </p>
-              <p className="text-[10px] text-slate-400">
+              <p className="text-[10px] text-[var(--ember-text-muted)]">
                 {isConnected ? `Active: ${activeFY}` : "System Database Locked"}
               </p>
             </div>
             {isConnected && (
               <button
                 onClick={handleDisconnect}
-                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md transition-colors"
+                className="p-1 hover:bg-[var(--ember-surface-raised)] text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] rounded-md transition-colors"
                 title="Disconnect Profile"
               >
                 <XCircle className="w-4 h-4" />
@@ -869,10 +877,10 @@ function App() {
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative">
         {/* Top Header */}
-        <header className="h-16 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-8 z-10">
+        <header className="h-16 border-b border-[var(--ember-border)] bg-[var(--ember-header-bg)] backdrop-blur-md flex items-center justify-between px-8 z-10">
           <div>
-            <span className="text-xs text-slate-400 font-medium">Outward Matching Engine</span>
-            <h2 className="text-sm font-semibold text-slate-200">
+            <span className="text-xs text-[var(--ember-text-muted)] font-medium">Outward Matching Engine</span>
+            <h2 className="text-base font-bold font-serif text-[var(--ember-text-primary)]">
               {activeTab === "dashboard" && "Dashboard Overview"}
               {activeTab === "registers" && "Sales Invoice Registers"}
               {activeTab === "revisions" && "Supplier Price Revisions Tracker"}
@@ -880,14 +888,16 @@ function App() {
               {activeTab === "reports" && "Reports & Export Center"}
               {activeTab === "import" && "Configure Excel Outward Import"}
               {activeTab === "settings" && "Company Profile Settings"}
+              {activeTab === "customer_matching" && "Customer Master Database"}
             </h2>
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-300">
-              <Building className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Active Profile: <strong className="text-indigo-400">{companyCode}</strong></span>
+            <div className="flex items-center gap-2 bg-[var(--ember-surface-raised)] px-3 py-1.5 rounded-lg border border-[var(--ember-border)] text-xs text-[var(--ember-text-primary)]">
+              <Building className="w-3.5 h-3.5 text-[var(--ember-primary)]" />
+              <span>Active Profile: <strong className="text-[var(--ember-primary)] font-mono">{companyCode}</strong></span>
             </div>
+            <ThemeToggle showLabel />
           </div>
         </header>
 
@@ -914,29 +924,29 @@ function App() {
           {activeTab === "registers" && (
             <div className="space-y-6">
               {/* Toolbar */}
-              <div className="flex items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-4 rounded-xl">
+              <div className="flex items-center justify-between gap-4 ember-card p-4">
                 <div className="flex items-center gap-3 flex-1 max-w-md">
                   <div className="relative w-full">
-                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-[var(--ember-text-muted)]" />
                     <input
                       type="text"
                       placeholder="Search by Invoice No, Customer Code or Name..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-4 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full ember-input pl-9 pr-4 py-2 text-xs"
                     />
                   </div>
                 </div>
 
-                <div className="flex gap-1 bg-slate-950 border border-slate-800 p-1 rounded-lg text-xs">
+                <div className="flex gap-1 bg-[var(--ember-surface-raised)] border border-[var(--ember-border)] p-1 rounded-lg text-xs">
                   {["ALL", "Imported", "Verified", "Draft", "Cancelled"].map((status) => (
                     <button
                       key={status}
                       onClick={() => setStatusFilter(status)}
-                      className={`px-3 py-1.5 rounded-md transition-all ${
+                      className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
                         statusFilter === status
-                          ? "bg-slate-800 text-slate-100 font-semibold"
-                          : "text-slate-400 hover:text-slate-200"
+                          ? "bg-[var(--ember-primary)] text-white font-semibold shadow-sm"
+                          : "text-[var(--ember-text-secondary)] hover:text-[var(--ember-text-primary)]"
                       }`}
                     >
                       {status}
@@ -946,11 +956,11 @@ function App() {
               </div>
 
               {/* Table Register Grid */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+              <div className="ember-card overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-950 text-slate-400 font-bold border-b border-slate-800 select-none">
+                      <tr className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)] select-none">
                         <th className="p-4">Invoice No</th>
                         <th className="p-4">Invoice Date</th>
                         <th className="p-4">Customer Details</th>
@@ -961,17 +971,17 @@ function App() {
                         <th className="p-4 text-center">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/60">
+                    <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                       {loadingInvoices ? (
                         <tr>
-                          <td colSpan={8} className="p-12 text-center text-slate-500">
-                            <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-400" />
+                          <td colSpan={8} className="p-12 text-center text-[var(--ember-text-muted)]">
+                            <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-[var(--ember-primary)]" />
                             Loading registers database...
                           </td>
                         </tr>
                       ) : filteredInvoices.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="p-12 text-center text-slate-500">
+                          <td colSpan={8} className="p-12 text-center text-[var(--ember-text-muted)]">
                             No invoices matched filter criteria.
                           </td>
                         </tr>
@@ -980,33 +990,33 @@ function App() {
                           <tr
                             key={inv.invoice_number}
                             onDoubleClick={() => handleOpenDetails(inv.invoice_number)}
-                            className="hover:bg-slate-800/35 transition-colors cursor-pointer select-none"
+                            className="hover:bg-[var(--ember-surface-raised)] transition-colors cursor-pointer select-none"
                           >
-                            <td className="p-4 font-mono font-bold text-indigo-400">{inv.invoice_number}</td>
-                            <td className="p-4 font-medium text-slate-300">{inv.invoice_date}</td>
+                            <td className="p-4 font-mono font-bold text-[var(--ember-primary)]">{inv.invoice_number}</td>
+                            <td className="p-4 font-medium text-[var(--ember-text-secondary)]">{inv.invoice_date}</td>
                             <td className="p-4">
-                              <div className="font-semibold text-slate-200">{inv.customer_name}</div>
-                              <div className="text-[10px] text-slate-500 mt-0.5">{inv.customer_code}</div>
+                              <div className="font-semibold text-[var(--ember-text-primary)]">{inv.customer_name}</div>
+                              <div className="text-[10px] text-[var(--ember-text-muted)] mt-0.5 font-mono">{inv.customer_code}</div>
                             </td>
-                            <td className="p-4 text-right font-mono font-medium text-slate-300">
+                            <td className="p-4 text-right font-mono font-medium text-[var(--ember-text-primary)]">
                               {inv.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                             </td>
-                            <td className="p-4 text-right font-mono text-slate-400">
+                            <td className="p-4 text-right font-mono text-[var(--ember-text-secondary)]">
                               {inv.total_tax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                             </td>
-                            <td className="p-4 text-right font-mono font-bold text-slate-100">
+                            <td className="p-4 text-right font-mono font-bold text-[var(--ember-primary)]">
                               {inv.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                             </td>
                             <td className="p-4 text-center">
                               <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase ${
+                                className={`px-2.5 py-1 ember-chip ${
                                   inv.status === "Verified"
-                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
                                     : inv.status === "Cancelled"
-                                    ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                    ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30"
                                     : inv.status === "Draft"
-                                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                    : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                                    : "bg-orange-500/15 text-[var(--ember-primary)] border border-orange-500/30"
                                 }`}
                               >
                                 {inv.status}
@@ -1015,7 +1025,7 @@ function App() {
                             <td className="p-4 text-center">
                               <button
                                 onClick={() => handleOpenDetails(inv.invoice_number)}
-                                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-md transition-colors inline-flex items-center gap-1"
+                                className="p-1.5 hover:bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] hover:text-[var(--ember-primary)] rounded-md transition-colors inline-flex items-center gap-1 font-medium"
                               >
                                 <Eye className="w-3.5 h-3.5" /> inspect
                               </button>
@@ -1028,20 +1038,20 @@ function App() {
                 </div>
 
                 {/* Pagination */}
-                <div className="bg-slate-950 p-4 border-t border-slate-800 flex justify-between items-center text-xs">
-                  <span className="text-slate-500">Page {currentPageIndex + 1}</span>
+                <div className="bg-[var(--ember-surface-raised)] p-4 border-t border-[var(--ember-border)] flex justify-between items-center text-xs">
+                  <span className="text-[var(--ember-text-muted)] font-mono">Page {currentPageIndex + 1}</span>
                   <div className="flex gap-2">
                     <button
                       onClick={handlePrevPage}
                       disabled={currentPageIndex === 0}
-                      className="bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded px-3 py-1.5 text-slate-300 disabled:opacity-40"
+                      className="ember-btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
                     >
                       Prev
                     </button>
                     <button
                       onClick={handleNextPage}
                       disabled={invoices.length < 12}
-                      className="bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded px-3 py-1.5 text-slate-300 disabled:opacity-40"
+                      className="ember-btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
                     >
                       Next
                     </button>
@@ -1054,23 +1064,23 @@ function App() {
           {activeTab === "customer_matching" && <CustomerMasterTab />}
 
           {activeTab === "revisions" && (
-            <div className="grid grid-cols-3 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
               {/* Revisions list */}
-              <div className="col-span-2 space-y-4">
+              <div className="lg:col-span-2 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">Price Revisions History</h3>
+                  <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider">Price Revisions History</h3>
                   <button
                     onClick={() => setIsRevisionModalOpen(true)}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1 transition-colors"
+                    className="ember-btn-primary px-3.5 py-2 text-xs flex items-center gap-1"
                   >
                     <PlusCircle className="w-4 h-4" /> Add price revision
                   </button>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden text-xs">
+                <div className="ember-card overflow-hidden text-xs">
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="bg-slate-950 text-slate-400 font-bold border-b border-slate-800">
+                      <tr className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                         <th className="p-4">Part Code</th>
                         <th className="p-4">Supplier ID</th>
                         <th className="p-4 text-right">Old Price</th>
@@ -1079,32 +1089,32 @@ function App() {
                         <th className="p-4 text-center">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/60">
+                    <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                       {loadingRevisions ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-slate-500">Loading revisions...</td>
+                          <td colSpan={6} className="p-8 text-center text-[var(--ember-text-muted)]">Loading revisions...</td>
                         </tr>
                       ) : revisions.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-slate-500">No price revisions logged.</td>
+                          <td colSpan={6} className="p-8 text-center text-[var(--ember-text-muted)]">No price revisions logged.</td>
                         </tr>
                       ) : (
                         revisions.map((rev) => (
                           <tr
                             key={rev.id?.toString()}
                             onClick={() => handleSelectRevision(rev)}
-                            className={`hover:bg-slate-800/35 transition-colors cursor-pointer select-none ${
-                              selectedRevision?.id === rev.id ? "bg-indigo-500/5 border-l-2 border-indigo-500" : ""
+                            className={`hover:bg-[var(--ember-surface-raised)] transition-colors cursor-pointer select-none ${
+                              selectedRevision?.id === rev.id ? "bg-[var(--ember-primary-light)] border-l-4 border-[var(--ember-primary)]" : ""
                             }`}
                           >
-                            <td className="p-4 font-bold text-slate-200">{rev.part_code}</td>
-                            <td className="p-4 text-slate-400">Supplier #{rev.supplier_id}</td>
-                            <td className="p-4 text-right font-mono text-slate-400">₹{rev.old_price.toFixed(2)}</td>
-                            <td className="p-4 text-right font-mono text-emerald-400">₹{rev.new_price.toFixed(2)}</td>
-                            <td className="p-4 font-mono text-slate-300">{rev.effective_date}</td>
+                            <td className="p-4 font-mono font-bold text-[var(--ember-text-primary)]">{rev.part_code}</td>
+                            <td className="p-4 text-[var(--ember-text-secondary)]">Supplier #{rev.supplier_id}</td>
+                            <td className="p-4 text-right font-mono text-[var(--ember-text-muted)]">₹{rev.old_price.toFixed(2)}</td>
+                            <td className="p-4 text-right font-mono text-emerald-600 dark:text-emerald-400 font-semibold">₹{rev.new_price.toFixed(2)}</td>
+                            <td className="p-4 font-mono text-[var(--ember-text-secondary)]">{rev.effective_date}</td>
                             <td className="p-4 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase ${
-                                rev.status === "Approved" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
+                              <span className={`px-2.5 py-1 ember-chip ${
+                                rev.status === "Approved" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30" : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
                               }`}>
                                 {rev.status}
                               </span>
@@ -1118,61 +1128,61 @@ function App() {
               </div>
 
               {/* Price revision preview panel */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+              <div className="ember-card p-6 space-y-6">
+                <h4 className="text-xs font-bold font-serif text-[var(--ember-text-primary)] uppercase tracking-wider border-b border-[var(--ember-border)] pb-3">
                   Revision Recovery Inspector
                 </h4>
                 {selectedRevision ? (
                   <div className="space-y-6 text-xs">
-                    <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 space-y-2">
-                      <div><strong className="text-slate-400">Target Part:</strong> <span className="font-mono text-slate-200">{selectedRevision.part_code}</span></div>
-                      <div><strong className="text-slate-400">Effective Date:</strong> <span className="font-mono text-slate-200">{selectedRevision.effective_date}</span></div>
-                      <div><strong className="text-slate-400">Price difference:</strong> <span className="text-rose-400 font-bold">-₹{selectedRevision.difference.toFixed(2)}</span></div>
+                    <div className="bg-[var(--ember-surface-raised)] p-4 rounded-lg border border-[var(--ember-border)] space-y-2">
+                      <div><strong className="text-[var(--ember-text-secondary)]">Target Part:</strong> <span className="font-mono text-[var(--ember-primary)] font-bold">{selectedRevision.part_code}</span></div>
+                      <div><strong className="text-[var(--ember-text-secondary)]">Effective Date:</strong> <span className="font-mono text-[var(--ember-text-primary)]">{selectedRevision.effective_date}</span></div>
+                      <div><strong className="text-[var(--ember-text-secondary)]">Price difference:</strong> <span className="text-rose-600 dark:text-rose-400 font-bold font-mono">-₹{selectedRevision.difference.toFixed(2)}</span></div>
                     </div>
 
                     {loadingRecoveryPreview ? (
-                      <div className="text-center text-slate-500 py-6">Calculating recovery impact...</div>
+                      <div className="text-center text-[var(--ember-text-muted)] py-6">Calculating recovery impact...</div>
                     ) : recoveryPreview.length === 0 ? (
-                      <div className="text-center text-slate-500 py-6">No matching invoices found for recovery.</div>
+                      <div className="text-center text-[var(--ember-text-muted)] py-6">No matching invoices found for recovery.</div>
                     ) : (
                       <div className="space-y-4">
-                        <div className="flex items-center justify-between font-semibold border-b border-slate-800 pb-2">
-                          <span>Invoices Impacted:</span>
-                          <span className="text-indigo-400 font-mono">{recoveryPreview.length} lines</span>
+                        <div className="flex items-center justify-between font-semibold border-b border-[var(--ember-border)] pb-2">
+                          <span className="text-[var(--ember-text-primary)]">Invoices Impacted:</span>
+                          <span className="text-[var(--ember-primary)] font-mono">{recoveryPreview.length} lines</span>
                         </div>
                         
-                        <div className="max-h-48 overflow-y-auto space-y-2">
+                        <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
                           {recoveryPreview.map((item, i) => (
-                            <div key={i} className="flex justify-between border-b border-slate-800/40 pb-1.5 text-[10px]">
-                              <span className="font-mono text-slate-400">Inv {item.invoice_number}</span>
-                              <span className="font-mono text-slate-200">Qty {item.quantity} (₹{item.total_difference.toFixed(2)})</span>
+                            <div key={i} className="flex justify-between border-b border-[var(--ember-border-subtle)] pb-1.5 text-[10px]">
+                              <span className="font-mono text-[var(--ember-text-secondary)]">Inv {item.invoice_number}</span>
+                              <span className="font-mono text-[var(--ember-text-primary)] font-semibold">Qty {item.quantity} (₹{item.total_difference.toFixed(2)})</span>
                             </div>
                           ))}
                         </div>
 
                         {selectedRevision.status !== "Approved" && (
-                          <div className="pt-4 border-t border-slate-800 space-y-3">
+                          <div className="pt-4 border-t border-[var(--ember-border)] space-y-3">
                             <div>
-                              <label className="block text-[10px] text-slate-500 mb-1 font-semibold">Debit Note Reference Number</label>
+                              <label className="block text-[10px] text-[var(--ember-text-muted)] mb-1 font-semibold">Debit Note Reference Number</label>
                               <input
                                 type="text"
                                 value={debitNoteNoInput}
                                 onChange={(e) => setDebitNoteNoInput(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-850 rounded p-2 text-xs focus:outline-none focus:border-indigo-500"
+                                className="w-full ember-input p-2 text-xs"
                               />
                             </div>
                             <div>
-                              <label className="block text-[10px] text-slate-500 mb-1 font-semibold">Remarks</label>
+                              <label className="block text-[10px] text-[var(--ember-text-muted)] mb-1 font-semibold">Remarks</label>
                               <input
                                 type="text"
                                 value={debitNoteRemarksInput}
                                 onChange={(e) => setDebitNoteRemarksInput(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-850 rounded p-2 text-xs focus:outline-none focus:border-indigo-500"
+                                className="w-full ember-input p-2 text-xs"
                               />
                             </div>
                             <button
                               onClick={handleGenerateDebitNote}
-                              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                              className="w-full ember-btn-primary py-2 text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                             >
                               <ShieldCheck className="w-4 h-4" /> Generate Recovery Debit Note
                             </button>
@@ -1182,7 +1192,7 @@ function App() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-500 text-center py-12">Select a price revision from the history to view potential debit note recoveries.</p>
+                  <p className="text-xs text-[var(--ember-text-muted)] text-center py-12">Select a price revision from the history to view potential debit note recoveries.</p>
                 )}
               </div>
             </div>
@@ -1191,20 +1201,20 @@ function App() {
           {activeTab === "notes" && (
             <div className="space-y-6">
               {/* Subtab Toggle */}
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center justify-between border-b border-[var(--ember-border)] pb-3">
                 <div className="flex gap-2">
                   <button
                     onClick={() => setActiveNotesSubTab("debit")}
-                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-                      activeNotesSubTab === "debit" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
+                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                      activeNotesSubTab === "debit" ? "ember-btn-primary shadow-sm" : "ember-btn-secondary text-[var(--ember-text-secondary)]"
                     }`}
                   >
                     Debit Notes (Supplier Price Recovery)
                   </button>
                   <button
                     onClick={() => setActiveNotesSubTab("credit")}
-                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-                      activeNotesSubTab === "credit" ? "bg-indigo-600 text-white shadow-md" : "text-slate-400 hover:text-slate-200"
+                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                      activeNotesSubTab === "credit" ? "ember-btn-primary shadow-sm" : "ember-btn-secondary text-[var(--ember-text-secondary)]"
                     }`}
                   >
                     Credit Notes (Sales Cancellations)
@@ -1214,26 +1224,26 @@ function App() {
                 {activeNotesSubTab === "credit" ? (
                   <button
                     onClick={handleExportCreditNotes}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+                    className="ember-btn-secondary px-4 py-2 text-xs flex items-center gap-1.5"
                   >
-                    <Download className="w-3.5 h-3.5 text-indigo-400" /> Export Credit Notes CSV
+                    <Download className="w-3.5 h-3.5 text-[var(--ember-primary)]" /> Export Credit Notes CSV
                   </button>
                 ) : (
                   <button
                     onClick={handleExportDebitNotes}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+                    className="ember-btn-secondary px-4 py-2 text-xs flex items-center gap-1.5"
                   >
-                    <Download className="w-3.5 h-3.5 text-indigo-400" /> Export Debit Notes CSV
+                    <Download className="w-3.5 h-3.5 text-[var(--ember-primary)]" /> Export Debit Notes CSV
                   </button>
                 )}
               </div>
 
               {/* Notes Register Grid */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl text-xs">
+              <div className="ember-card overflow-hidden text-xs">
                 {activeNotesSubTab === "debit" ? (
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="bg-slate-950 text-slate-400 font-bold border-b border-slate-800">
+                      <tr className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                         <th className="p-4">Debit Note No</th>
                         <th className="p-4">Supplier Reference</th>
                         <th className="p-4 font-mono">Date</th>
@@ -1243,26 +1253,26 @@ function App() {
                         <th className="p-4 text-center">Action</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/60">
+                    <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                       {loadingNotes ? (
                         <tr>
-                          <td colSpan={7} className="p-8 text-center text-slate-500">Loading notes...</td>
+                          <td colSpan={7} className="p-8 text-center text-[var(--ember-text-muted)]">Loading notes...</td>
                         </tr>
                       ) : debitNotes.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-8 text-center text-slate-500">No debit notes found.</td>
+                          <td colSpan={7} className="p-8 text-center text-[var(--ember-text-muted)]">No debit notes found.</td>
                         </tr>
                       ) : (
                         debitNotes.map((dn) => (
-                          <tr key={dn.debit_note_number} className="hover:bg-slate-800/10">
-                            <td className="p-4 font-mono font-bold text-indigo-400">{dn.debit_note_number}</td>
-                            <td className="p-4">Supplier #{dn.supplier_id}</td>
-                            <td className="p-4 font-mono">{dn.debit_note_date}</td>
-                            <td className="p-4 text-right font-mono text-slate-300">₹{dn.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                            <td className="p-4 text-right font-mono font-bold text-emerald-400">₹{dn.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <tr key={dn.debit_note_number} className="hover:bg-[var(--ember-surface-raised)] transition-colors">
+                            <td className="p-4 font-mono font-bold text-[var(--ember-primary)]">{dn.debit_note_number}</td>
+                            <td className="p-4 text-[var(--ember-text-secondary)]">Supplier #{dn.supplier_id}</td>
+                            <td className="p-4 font-mono text-[var(--ember-text-secondary)]">{dn.debit_note_date}</td>
+                            <td className="p-4 text-right font-mono text-[var(--ember-text-primary)]">₹{dn.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                            <td className="p-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">₹{dn.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                             <td className="p-4 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase ${
-                                dn.status === "Approved" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                              <span className={`px-2.5 py-1 ember-chip ${
+                                dn.status === "Approved" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30" : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
                               }`}>
                                 {dn.status}
                               </span>
@@ -1271,7 +1281,7 @@ function App() {
                               {dn.status === "Draft" && (
                                 <button
                                   onClick={() => handleApproveDebitNote(dn.debit_note_number)}
-                                  className="bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white border border-indigo-500/20 px-3 py-1 rounded transition-colors text-[10px] font-semibold"
+                                  className="ember-btn-primary px-3 py-1 text-[10px] cursor-pointer"
                                 >
                                   Approve & Lock
                                 </button>
@@ -1285,7 +1295,7 @@ function App() {
                 ) : (
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="bg-slate-950 text-slate-400 font-bold border-b border-slate-800">
+                      <tr className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                         <th className="p-4">Credit Note No</th>
                         <th className="p-4">Invoice Reference</th>
                         <th className="p-4 font-mono">Date</th>
@@ -1294,26 +1304,26 @@ function App() {
                         <th className="p-4 text-center">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/60">
+                    <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                       {loadingNotes ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-slate-500">Loading notes...</td>
+                          <td colSpan={6} className="p-8 text-center text-[var(--ember-text-muted)]">Loading notes...</td>
                         </tr>
                       ) : creditNotes.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-slate-500">No credit notes found.</td>
+                          <td colSpan={6} className="p-8 text-center text-[var(--ember-text-muted)]">No credit notes found.</td>
                         </tr>
                       ) : (
                         creditNotes.map((cn) => (
-                          <tr key={cn.credit_note_number} className="hover:bg-slate-800/10">
-                            <td className="p-4 font-mono font-bold text-indigo-400">{cn.credit_note_number}</td>
-                            <td className="p-4 font-mono text-slate-400">{cn.invoice_number}</td>
-                            <td className="p-4 font-mono">{cn.credit_note_date}</td>
-                            <td className="p-4 text-right font-mono text-slate-300">₹{cn.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                            <td className="p-4 text-right font-mono font-bold text-rose-400">₹{cn.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <tr key={cn.credit_note_number} className="hover:bg-[var(--ember-surface-raised)] transition-colors">
+                            <td className="p-4 font-mono font-bold text-[var(--ember-primary)]">{cn.credit_note_number}</td>
+                            <td className="p-4 font-mono text-[var(--ember-text-muted)]">{cn.invoice_number}</td>
+                            <td className="p-4 font-mono text-[var(--ember-text-secondary)]">{cn.credit_note_date}</td>
+                            <td className="p-4 text-right font-mono text-[var(--ember-text-primary)]">₹{cn.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                            <td className="p-4 text-right font-mono font-bold text-rose-600 dark:text-rose-400">₹{cn.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                             <td className="p-4 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-semibold uppercase ${
-                                cn.status === "Approved" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
+                              <span className={`px-2.5 py-1 ember-chip ${
+                                cn.status === "Approved" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30" : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
                               }`}>
                                 {cn.status}
                               </span>
@@ -1335,35 +1345,35 @@ function App() {
                 onClick={handleSelectFile}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleFileDrop}
-                className="border-2 border-dashed border-slate-800 hover:border-indigo-500/60 bg-slate-900/60 hover:bg-indigo-950/20 rounded-xl p-8 text-center cursor-pointer transition-all duration-200 group"
+                className="border-2 border-dashed border-[var(--ember-border)] hover:border-[var(--ember-primary)] bg-[var(--ember-surface)] hover:bg-[var(--ember-surface-raised)] rounded-xl p-8 text-center cursor-pointer transition-all duration-200 group"
               >
-                <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+                <div className="p-3 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
                   <FileUp className="w-6 h-6" />
                 </div>
-                <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                <h4 className="text-xs font-bold font-serif text-[var(--ember-text-primary)] uppercase tracking-wider">
                   Click to Browse or Drag & Drop Sales Spreadsheet
                 </h4>
-                <p className="text-[11px] text-slate-400 mt-1">
+                <p className="text-[11px] text-[var(--ember-text-muted)] mt-1">
                   Supports ERP outward exports in .xlsx, .xls, or .csv formats
                 </p>
                 {selectedFilePath && (
-                  <div className="mt-3 inline-block bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono text-indigo-400">
+                  <div className="mt-3 inline-block bg-[var(--ember-surface-raised)] px-3 py-1.5 rounded-lg border border-[var(--ember-border)] text-xs font-mono text-[var(--ember-primary)]">
                     Selected: {selectedFilePath}
                   </div>
                 )}
               </div>
 
               {/* Import Setup Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-slate-200 mb-6 uppercase tracking-wider text-indigo-400">Configure Import Job</h3>
+              <div className="ember-card p-6">
+                <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] mb-6 uppercase tracking-wider">Configure Import Job</h3>
 
-                <div className="grid grid-cols-2 gap-6 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2">Selected Mapping Template</label>
+                    <label className="block text-xs font-semibold text-[var(--ember-text-secondary)] mb-2">Selected Mapping Template</label>
                     <select
                       value={selectedTemplateId || ""}
                       onChange={(e) => setSelectedTemplateId(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full ember-input p-2.5 text-xs font-semibold"
                     >
                       {templates.map((t) => (
                         <option key={t.id?.toString()} value={t.id?.toString()}>
@@ -1374,7 +1384,7 @@ function App() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2">Excel File Source Path</label>
+                    <label className="block text-xs font-semibold text-[var(--ember-text-secondary)] mb-2">Excel File Source Path</label>
                     <div className="flex gap-2">
                       <input
                         type="text"
@@ -1387,11 +1397,11 @@ function App() {
                           setPreviewData(null);
                           setImportStatus("idle");
                         }}
-                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                        className="flex-1 ember-input p-2.5 text-xs font-mono"
                       />
                       <button
                         onClick={handleSelectFile}
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2.5 rounded-lg transition-colors flex items-center gap-1.5"
+                        className="ember-btn-primary px-4 py-2.5 text-xs flex items-center gap-1.5"
                       >
                         <FileSpreadsheet className="w-4 h-4" /> Browse
                       </button>
@@ -1399,12 +1409,12 @@ function App() {
                   </div>
                 </div>
 
-                <div className="flex justify-end gap-3 border-t border-slate-800/80 pt-6">
+                <div className="flex justify-end gap-3 border-t border-[var(--ember-border)] pt-6">
                   {selectedFilePath && (
                     <button
                       onClick={handleRunPreview}
                       disabled={isPreviewing}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                      className="ember-btn-secondary px-5 py-2.5 text-xs flex items-center gap-1.5 disabled:opacity-50"
                     >
                       {isPreviewing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                       Run Validation Preview
@@ -1415,7 +1425,7 @@ function App() {
                     <button
                       onClick={handleCommitImport}
                       disabled={importStatus === "importing"}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors flex items-center gap-1.5"
+                      className="ember-btn-primary px-5 py-2.5 text-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       {importStatus === "importing" ? (
                         <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1430,51 +1440,51 @@ function App() {
 
               {/* Status alerts */}
               {importStatus === "success" && (
-                <div className="bg-emerald-950/20 border border-emerald-900/60 rounded-xl p-4 flex gap-4 text-emerald-200">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 flex gap-4 text-emerald-800 dark:text-emerald-200">
+                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
                   <div>
-                    <h4 className="font-bold text-sm">Import Completed Successfully</h4>
-                    <p className="text-xs text-emerald-400/90 mt-1">{statusMessage}</p>
+                    <h4 className="font-bold text-sm text-[var(--ember-text-primary)]">Import Completed Successfully</h4>
+                    <p className="text-xs text-[var(--ember-text-secondary)] mt-1">{statusMessage}</p>
                   </div>
                 </div>
               )}
               {importStatus === "error" && (
-                <div className="bg-rose-950/20 border border-rose-900/60 rounded-xl p-4 flex gap-4 text-rose-200">
-                  <XCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 flex gap-4 text-rose-800 dark:text-rose-200">
+                  <XCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
                   <div>
-                    <h4 className="font-bold text-sm">Import Failed</h4>
-                    <p className="text-xs text-rose-400/90 mt-1">{statusMessage}</p>
+                    <h4 className="font-bold text-sm text-[var(--ember-text-primary)]">Import Failed</h4>
+                    <p className="text-xs text-[var(--ember-text-secondary)] mt-1">{statusMessage}</p>
                   </div>
                 </div>
               )}
 
               {/* Preview Analysis Panel */}
               {previewData && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div className="ember-card p-6 space-y-6">
+                  <div className="flex items-center justify-between border-b border-[var(--ember-border)] pb-4">
                     <div>
-                      <h4 className="text-sm font-bold text-slate-200">Validation Results Summary</h4>
-                      <p className="text-[10px] text-slate-400 mt-0.5">SHA256 File Signature: {previewData.batch_hash}</p>
+                      <h4 className="text-sm font-bold font-serif text-[var(--ember-primary)]">Validation Results Summary</h4>
+                      <p className="text-[10px] text-[var(--ember-text-muted)] font-mono mt-0.5">SHA256 File Signature: {previewData.batch_hash}</p>
                     </div>
-                    <div className="flex gap-4 text-xs font-semibold">
-                      <span className="text-indigo-400">{previewData.row_count - 1} rows parsed</span>
-                      <span className="text-emerald-400">+{previewData.proposed_inserts} new</span>
-                      <span className="text-blue-400">*{previewData.proposed_updates} updates</span>
-                      <span className="text-rose-400">{previewData.errors.length} errors</span>
-                      <span className="text-amber-400">{previewData.warnings.length} warnings</span>
+                    <div className="flex gap-4 text-xs font-semibold font-mono">
+                      <span className="text-[var(--ember-primary)]">{previewData.row_count - 1} rows parsed</span>
+                      <span className="text-emerald-700 dark:text-emerald-400">+{previewData.proposed_inserts} new</span>
+                      <span className="text-blue-700 dark:text-blue-400">*{previewData.proposed_updates} updates</span>
+                      <span className="text-rose-700 dark:text-rose-400">{previewData.errors.length} errors</span>
+                      <span className="text-amber-700 dark:text-amber-400">{previewData.warnings.length} warnings</span>
                     </div>
                   </div>
 
                   {/* Errors */}
                   {previewData.errors.length > 0 && (
                     <div className="space-y-2">
-                      <h5 className="text-xs font-semibold text-rose-400 flex items-center gap-1.5">
+                      <h5 className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
                         <XCircle className="w-4 h-4" /> Validation Errors (Blocks Import)
                       </h5>
-                      <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                      <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
                         <table className="w-full text-left border-collapse">
                           <thead>
-                            <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                            <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                               <th className="p-3">Excel Row</th>
                               <th className="p-3">Invoice No</th>
                               <th className="p-3">Field Key</th>
@@ -1482,39 +1492,39 @@ function App() {
                               <th className="p-3">Actual Value</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-800/60">
+                          <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                             {previewData.errors.map((err, i) => (
-                              <tr key={i} className="hover:bg-slate-900/30 text-rose-200/90">
+                              <tr key={i} className="hover:bg-[var(--ember-surface)] text-rose-700 dark:text-rose-300">
                                 <td className="p-3">
                                   {err.row_no === 0 ? (
-                                    <span className="font-semibold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded text-[11px]">
+                                    <span className="font-semibold text-rose-700 dark:text-rose-300 bg-rose-500/15 px-2 py-0.5 rounded text-[11px]">
                                       Header Row 1
                                     </span>
                                   ) : (
                                     <span>Row {err.row_no}</span>
                                   )}
                                 </td>
-                                <td className="p-3 font-mono text-slate-400">
+                                <td className="p-3 font-mono text-[var(--ember-text-muted)]">
                                   {err.row_no === 0 ? "Header Column" : (err.invoice_no || "N/A")}
                                 </td>
-                                <td className="p-3 font-semibold text-slate-300 font-mono">{err.field_name}</td>
+                                <td className="p-3 font-semibold text-[var(--ember-text-primary)] font-mono">{err.field_name}</td>
                                 <td className="p-3">
                                   {err.error_type === "ERR_IMPORT_001" ? (
-                                    <span className="font-semibold text-rose-300">Missing Column Header</span>
+                                    <span className="font-semibold text-rose-600 dark:text-rose-400">Missing Column Header</span>
                                   ) : err.error_type === "ERR_IMPORT_002" ? (
-                                    <span className="font-semibold text-rose-400">Duplicate File</span>
+                                    <span className="font-semibold text-rose-600 dark:text-rose-400">Duplicate File</span>
                                   ) : (
                                     err.error_type
                                   )}
                                 </td>
                                 <td className="p-3 font-mono bg-rose-500/5">
                                   {err.error_type === "ERR_IMPORT_002" ? (
-                                    <span className="text-rose-300 font-sans text-xs font-semibold">
+                                    <span className="text-rose-700 dark:text-rose-300 font-sans text-xs font-semibold">
                                       This file has already been imported into your database in a previous batch. Double importing identical files is blocked to prevent data duplication.
                                     </span>
                                   ) : err.row_no === 0 ? (
-                                    <span className="text-amber-300 font-sans text-xs">
-                                      Column for '<strong className="text-white">{err.field_name}</strong>' was not found in Row 1 of your Excel file.
+                                    <span className="text-amber-700 dark:text-amber-300 font-sans text-xs">
+                                      Column for '<strong className="text-[var(--ember-text-primary)]">{err.field_name}</strong>' was not found in Row 1 of your Excel file.
                                     </span>
                                   ) : (
                                     err.actual_value
@@ -1531,13 +1541,13 @@ function App() {
                   {/* Warnings */}
                   {previewData.warnings.length > 0 && (
                     <div className="space-y-2">
-                      <h5 className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+                      <h5 className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4" /> Import Warnings (Auto-Resolves/Seed Registry Queue)
                       </h5>
-                      <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                      <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
                         <table className="w-full text-left border-collapse">
                           <thead>
-                            <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                            <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                               <th className="p-3">Excel Row</th>
                               <th className="p-3">Invoice No</th>
                               <th className="p-3">Field Key</th>
@@ -1545,17 +1555,17 @@ function App() {
                               <th className="p-3">Description</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-800/60">
+                          <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                             {previewData.warnings.map((wrn, i) => (
-                              <tr key={i} className="hover:bg-slate-900/30 text-amber-200/90">
-                                <td className="p-3">{wrn.row_no}</td>
-                                <td className="p-3 font-mono">{wrn.invoice_no || "N/A"}</td>
-                                <td className="p-3 font-semibold text-slate-400">{wrn.field_name}</td>
-                                <td className="p-3">{wrn.warning_type}</td>
+                              <tr key={i} className="hover:bg-[var(--ember-surface)] text-amber-800 dark:text-amber-200">
+                                <td className="p-3 font-mono">{wrn.row_no}</td>
+                                <td className="p-3 font-mono text-[var(--ember-text-muted)]">{wrn.invoice_no || "N/A"}</td>
+                                <td className="p-3 font-semibold text-[var(--ember-text-secondary)] font-mono">{wrn.field_name}</td>
+                                <td className="p-3 font-mono">{wrn.warning_type}</td>
                                 <td className="p-3">
                                   {wrn.warning_type === "ERR_VALIDATION_004" ? (
                                     <span className="flex items-center gap-1">
-                                      Unrecognized code: <strong className="text-indigo-400">{wrn.actual_value}</strong>. Auto-creates registry in review queue.
+                                      Unrecognized code: <strong className="text-[var(--ember-primary)] font-mono">{wrn.actual_value}</strong>. Auto-creates registry in review queue.
                                     </span>
                                   ) : (
                                     <span>Totals mismatch. Expected sum: {wrn.expected_value}</span>
@@ -1576,14 +1586,14 @@ function App() {
           {activeTab === "reports" && (
             <div className="space-y-6">
               {/* Reports Sub-Header Navigation */}
-              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center justify-between border-b border-[var(--ember-border)] pb-4">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setReportSubTab("export")}
-                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
                       reportSubTab === "export"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                        ? "ember-btn-primary shadow-sm"
+                        : "ember-btn-secondary"
                     }`}
                   >
                     <Download className="w-3.5 h-3.5" />
@@ -1591,10 +1601,10 @@ function App() {
                   </button>
                   <button
                     onClick={() => setReportSubTab("monthly")}
-                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
                       reportSubTab === "monthly"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                        ? "ember-btn-primary shadow-sm"
+                        : "ember-btn-secondary"
                     }`}
                   >
                     <BarChart3 className="w-3.5 h-3.5" />
@@ -1602,10 +1612,10 @@ function App() {
                   </button>
                   <button
                     onClick={() => setReportSubTab("gst")}
-                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
                       reportSubTab === "gst"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                        ? "ember-btn-primary shadow-sm"
+                        : "ember-btn-secondary"
                     }`}
                   >
                     <PieChart className="w-3.5 h-3.5" />
@@ -1613,10 +1623,10 @@ function App() {
                   </button>
                   <button
                     onClick={() => setReportSubTab("customers")}
-                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
                       reportSubTab === "customers"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                        ? "ember-btn-primary shadow-sm"
+                        : "ember-btn-secondary"
                     }`}
                   >
                     <Building className="w-3.5 h-3.5" />
@@ -1624,10 +1634,10 @@ function App() {
                   </button>
                   <button
                     onClick={() => setReportSubTab("items")}
-                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
                       reportSubTab === "items"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
-                        : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                        ? "ember-btn-primary shadow-sm"
+                        : "ember-btn-secondary"
                     }`}
                   >
                     <Tag className="w-3.5 h-3.5" />
@@ -1640,18 +1650,18 @@ function App() {
                     type="date"
                     value={reportDateFrom}
                     onChange={(e) => setReportDateFrom(e.target.value)}
-                    className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                    className="ember-input px-3 py-1.5 text-xs font-mono"
                   />
-                  <span className="text-xs text-slate-500">to</span>
+                  <span className="text-xs text-[var(--ember-text-muted)]">to</span>
                   <input
                     type="date"
                     value={reportDateTo}
                     onChange={(e) => setReportDateTo(e.target.value)}
-                    className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                    className="ember-input px-3 py-1.5 text-xs font-mono"
                   />
                   <button
                     onClick={loadReportData}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                    className="ember-btn-secondary px-3 py-1.5 text-xs"
                   >
                     Filter
                   </button>
@@ -1661,12 +1671,12 @@ function App() {
               {/* Sub-Tab 1: Export Generator */}
               {reportSubTab === "export" && (
                 <div className="grid grid-cols-3 gap-6">
-                  <div className="col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+                  <div className="col-span-2 ember-card p-6 space-y-6">
                     <div>
-                      <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">
+                      <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider">
                         Export Format Options
                       </h3>
-                      <p className="text-xs text-slate-400 mt-1">
+                      <p className="text-xs text-[var(--ember-text-secondary)] mt-1">
                         Select the destination layout format to compile outward sales invoices into downloadable files.
                       </p>
                     </div>
@@ -1676,13 +1686,13 @@ function App() {
                         onClick={() => setExportFormat("tally")}
                         className={`cursor-pointer p-4 rounded-xl border transition-all ${
                           exportFormat === "tally"
-                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
-                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                            ? "bg-[var(--ember-primary-light)] border-[var(--ember-primary)] text-[var(--ember-primary)]"
+                            : "bg-[var(--ember-surface-raised)] border-[var(--ember-border)] text-[var(--ember-text-secondary)] hover:border-[var(--ember-primary)]"
                         }`}
                       >
-                        <FileSpreadsheet className="w-6 h-6 mb-2 text-indigo-400" />
-                        <h4 className="font-bold text-xs text-slate-200">Tally Excel (Multi-Rate Split)</h4>
-                        <p className="text-[10px] text-slate-400 mt-1">
+                        <FileSpreadsheet className="w-6 h-6 mb-2 text-[var(--ember-primary)]" />
+                        <h4 className="font-bold text-xs text-[var(--ember-text-primary)]">Tally Excel (Multi-Rate Split)</h4>
+                        <p className="text-[10px] text-[var(--ember-text-muted)] mt-1">
                           Splits multi-tax rate invoices into separate voucher lines (e.g. 372076 → 372076, 372076A) for seamless Tally Prime import.
                         </p>
                       </div>
@@ -1691,13 +1701,13 @@ function App() {
                         onClick={() => setExportFormat("excel")}
                         className={`cursor-pointer p-4 rounded-xl border transition-all ${
                           exportFormat === "excel"
-                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
-                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                            ? "bg-[var(--ember-primary-light)] border-[var(--ember-primary)] text-[var(--ember-primary)]"
+                            : "bg-[var(--ember-surface-raised)] border-[var(--ember-border)] text-[var(--ember-text-secondary)] hover:border-[var(--ember-primary)]"
                         }`}
                       >
-                        <FileText className="w-6 h-6 mb-2 text-emerald-400" />
-                        <h4 className="font-bold text-xs text-slate-200">Standard Flat Excel</h4>
-                        <p className="text-[10px] text-slate-400 mt-1">
+                        <FileText className="w-6 h-6 mb-2 text-emerald-600 dark:text-emerald-400" />
+                        <h4 className="font-bold text-xs text-[var(--ember-text-primary)]">Standard Flat Excel</h4>
+                        <p className="text-[10px] text-[var(--ember-text-muted)] mt-1">
                           Consolidated flat spreadsheet listing all invoice items with complete tax breakdown columns.
                         </p>
                       </div>
@@ -1706,13 +1716,13 @@ function App() {
                         onClick={() => setExportFormat("csv")}
                         className={`cursor-pointer p-4 rounded-xl border transition-all ${
                           exportFormat === "csv"
-                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
-                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                            ? "bg-[var(--ember-primary-light)] border-[var(--ember-primary)] text-[var(--ember-primary)]"
+                            : "bg-[var(--ember-surface-raised)] border-[var(--ember-border)] text-[var(--ember-text-secondary)] hover:border-[var(--ember-primary)]"
                         }`}
                       >
-                        <Download className="w-6 h-6 mb-2 text-blue-400" />
-                        <h4 className="font-bold text-xs text-slate-200">CSV Raw Stream</h4>
-                        <p className="text-[10px] text-slate-400 mt-1">
+                        <Download className="w-6 h-6 mb-2 text-blue-600 dark:text-blue-400" />
+                        <h4 className="font-bold text-xs text-[var(--ember-text-primary)]">CSV Raw Stream</h4>
+                        <p className="text-[10px] text-[var(--ember-text-muted)] mt-1">
                           Ultra-fast plaintext CSV output for downstream data processing, Python pipelines, or custom ERP integration.
                         </p>
                       </div>
@@ -1721,29 +1731,29 @@ function App() {
                         onClick={() => setExportFormat("einvoice_json")}
                         className={`cursor-pointer p-4 rounded-xl border transition-all ${
                           exportFormat === "einvoice_json"
-                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
-                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                            ? "bg-[var(--ember-primary-light)] border-[var(--ember-primary)] text-[var(--ember-primary)]"
+                            : "bg-[var(--ember-surface-raised)] border-[var(--ember-border)] text-[var(--ember-text-secondary)] hover:border-[var(--ember-primary)]"
                         }`}
                       >
-                        <FileJson className="w-6 h-6 mb-2 text-amber-400" />
-                        <h4 className="font-bold text-xs text-slate-200">E-Invoice JSON (Credit Notes)</h4>
-                        <p className="text-[10px] text-slate-400 mt-1">
+                        <FileJson className="w-6 h-6 mb-2 text-amber-600 dark:text-amber-400" />
+                        <h4 className="font-bold text-xs text-[var(--ember-text-primary)]">E-Invoice JSON (Credit Notes)</h4>
+                        <p className="text-[10px] text-[var(--ember-text-muted)] mt-1">
                           Generates hierarchical JSON upload files matching the GST portal standard v1.1 schema specifically for Credit Notes.
                         </p>
                       </div>
                     </div>
 
-                    <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
-                      <div className="text-xs text-slate-400">
+                    <div className="pt-4 border-t border-[var(--ember-border)] flex items-center justify-between">
+                      <div className="text-xs text-[var(--ember-text-muted)]">
                         <span>Range: </span>
-                        <span className="font-semibold text-slate-200">
+                        <span className="font-semibold font-mono text-[var(--ember-text-primary)]">
                           {reportDateFrom || "All Dates"} to {reportDateTo || "Latest"}
                         </span>
                       </div>
                       <button
                         onClick={handleExport}
                         disabled={isExporting}
-                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs px-6 py-2.5 rounded-lg transition-colors flex items-center gap-2"
+                        className="ember-btn-primary px-6 py-2.5 text-xs flex items-center gap-2 cursor-pointer"
                       >
                         {isExporting ? (
                           <>
@@ -1761,32 +1771,32 @@ function App() {
 
                     {/* Export Result Notification */}
                     {exportResult && (
-                      <div className="bg-emerald-950/20 border border-emerald-900/60 rounded-xl p-4 flex gap-4 text-emerald-200 text-xs">
-                        <CheckCircle className="w-5 h-5 flex-shrink-0 text-emerald-400 mt-0.5" />
+                      <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 flex gap-4 text-emerald-800 dark:text-emerald-200 text-xs">
+                        <CheckCircle className="w-5 h-5 flex-shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" />
                         <div>
-                          <h4 className="font-bold text-slate-200">{exportResult.format} Generation Complete</h4>
-                          <p className="text-slate-400 mt-0.5">{exportResult.message}</p>
-                          <p className="font-mono text-[10px] text-emerald-400 mt-1">Saved to: {exportResult.output_path}</p>
+                          <h4 className="font-bold text-[var(--ember-text-primary)]">{exportResult.format} Generation Complete</h4>
+                          <p className="text-[var(--ember-text-secondary)] mt-0.5">{exportResult.message}</p>
+                          <p className="font-mono text-[10px] text-emerald-700 dark:text-emerald-400 mt-1">Saved to: {exportResult.output_path}</p>
                         </div>
                       </div>
                     )}
                   </div>
 
                   {/* Rules & Export Help Card */}
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-                    <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Tally Rate-Split Export Rules</h4>
-                    <div className="space-y-3 text-xs text-slate-400 leading-relaxed">
-                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                        <p className="font-semibold text-slate-300 mb-1">Rule 1: Invoice Number Preservation</p>
-                        <p className="text-[11px]">The primary GST rate item group preserves the exact invoice number exported from your ERP system.</p>
+                  <div className="ember-card p-6 space-y-4">
+                    <h4 className="text-xs font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider">Tally Rate-Split Export Rules</h4>
+                    <div className="space-y-3 text-xs text-[var(--ember-text-secondary)] leading-relaxed">
+                      <div className="bg-[var(--ember-surface-raised)] p-3 rounded-lg border border-[var(--ember-border)]">
+                        <p className="font-semibold text-[var(--ember-text-primary)] mb-1">Rule 1: Invoice Number Preservation</p>
+                        <p className="text-[11px] text-[var(--ember-text-muted)]">The primary GST rate item group preserves the exact invoice number exported from your ERP system.</p>
                       </div>
-                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                        <p className="font-semibold text-slate-300 mb-1">Rule 2: Alphabetical Suffix Allocation</p>
-                        <p className="text-[11px]">Subsequent rate groups append uppercase alphabetical labels (A, B, C...) to ensure voucher line integrity in Tally Prime.</p>
+                      <div className="bg-[var(--ember-surface-raised)] p-3 rounded-lg border border-[var(--ember-border)]">
+                        <p className="font-semibold text-[var(--ember-text-primary)] mb-1">Rule 2: Alphabetical Suffix Allocation</p>
+                        <p className="text-[11px] text-[var(--ember-text-muted)]">Subsequent rate groups append uppercase alphabetical labels (A, B, C...) to ensure voucher line integrity in Tally Prime.</p>
                       </div>
-                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                        <p className="font-semibold text-slate-300 mb-1">Rule 3: Cancelled Invoice Shield</p>
-                        <p className="text-[11px]">Invoices flagged as Draft or Cancelled are automatically excluded from Tally exports.</p>
+                      <div className="bg-[var(--ember-surface-raised)] p-3 rounded-lg border border-[var(--ember-border)]">
+                        <p className="font-semibold text-[var(--ember-text-primary)] mb-1">Rule 3: Cancelled Invoice Shield</p>
+                        <p className="text-[11px] text-[var(--ember-text-muted)]">Invoices flagged as Draft or Cancelled are automatically excluded from Tally exports.</p>
                       </div>
                     </div>
                   </div>
@@ -1795,29 +1805,29 @@ function App() {
 
               {/* Sub-Tab 2: Monthly Sales Performance */}
               {reportSubTab === "monthly" && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">
+                <div className="ember-card p-6 space-y-6">
+                  <div className="flex items-center justify-between border-b border-[var(--ember-border)] pb-4">
+                    <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider">
                       Monthly Outward Sales Register Summary
                     </h3>
                     <button
                       onClick={loadMonthlySales}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
+                      className="text-xs text-[var(--ember-primary)] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                     >
                       <RefreshCw className="w-3.5 h-3.5" /> Refresh Data
                     </button>
                   </div>
 
                   {loadingReports ? (
-                    <div className="p-8 text-center text-slate-400 text-xs flex justify-center items-center gap-2">
-                      <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                    <div className="p-8 text-center text-[var(--ember-text-muted)] text-xs flex justify-center items-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin text-[var(--ember-primary)]" />
                       Loading monthly aggregates...
                     </div>
                   ) : (
-                    <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                    <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
                       <table className="w-full text-left border-collapse">
                         <thead>
-                          <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                          <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                             <th className="p-3">Month</th>
                             <th className="p-3 text-right">Invoice Count</th>
                             <th className="p-3 text-right">Taxable Value (₹)</th>
@@ -1827,16 +1837,16 @@ function App() {
                             <th className="p-3 text-right">Gross Total (₹)</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-800/60">
+                        <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                           {monthlySales.map((row, idx) => (
-                            <tr key={idx} className="hover:bg-slate-900/30 text-slate-300">
-                              <td className="p-3 font-semibold text-slate-200 font-mono">{row.month_label}</td>
-                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
-                              <td className="p-3 text-right font-mono">₹{row.total_taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.total_cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.total_sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono text-blue-400/90">₹{row.total_igst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono font-bold text-indigo-400">₹{row.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                            <tr key={idx} className="hover:bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] transition-colors">
+                              <td className="p-3 font-semibold text-[var(--ember-text-primary)] font-mono">{row.month_label}</td>
+                              <td className="p-3 text-right font-mono text-[var(--ember-text-muted)]">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono text-[var(--ember-text-primary)]">₹{row.total_taxable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">₹{row.total_cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">₹{row.total_sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-blue-700 dark:text-blue-400">₹{row.total_igst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono font-bold text-[var(--ember-primary)]">₹{row.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1848,15 +1858,15 @@ function App() {
 
               {/* Sub-Tab 3: GST Rate Breakdown */}
               {reportSubTab === "gst" && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-4">
+                <div className="ember-card p-6 space-y-6">
+                  <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider border-b border-[var(--ember-border)] pb-4">
                     GST Tax Liability Breakdown by Rate Tier
                   </h3>
 
-                  <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                  <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
                     <table className="w-full text-left border-collapse">
                       <thead>
-                        <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                        <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                           <th className="p-3">GST Rate Tier</th>
                           <th className="p-3 text-right">Invoices</th>
                           <th className="p-3 text-right">Assessable Value (₹)</th>
@@ -1866,26 +1876,26 @@ function App() {
                           <th className="p-3 text-right">Total Tax (₹)</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800/60">
+                      <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                         {gstRateSummary.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="p-6 text-center text-slate-500">
+                            <td colSpan={7} className="p-6 text-center text-[var(--ember-text-muted)]">
                               No GST data found for date range filter. Select dates above and click Filter.
                             </td>
                           </tr>
                         ) : (
                           gstRateSummary.map((row, idx) => (
-                            <tr key={idx} className="hover:bg-slate-900/30 text-slate-300">
-                              <td className="p-3 font-semibold text-slate-200 flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                            <tr key={idx} className="hover:bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] transition-colors">
+                              <td className="p-3 font-semibold text-[var(--ember-text-primary)] flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-[var(--ember-primary)]"></span>
                                 {row.gst_rate}% GST Tier
                               </td>
-                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
-                              <td className="p-3 text-right font-mono">₹{row.taxable_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.cgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono text-emerald-400/90">₹{row.sgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono text-blue-400/90">₹{row.igst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3 text-right font-mono font-bold text-indigo-400">₹{row.total_tax.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-[var(--ember-text-muted)]">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono text-[var(--ember-text-primary)]">₹{row.taxable_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">₹{row.cgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">₹{row.sgst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono text-blue-700 dark:text-blue-400">₹{row.igst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-3 text-right font-mono font-bold text-[var(--ember-primary)]">₹{row.total_tax.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                             </tr>
                           ))
                         )}
@@ -1897,15 +1907,15 @@ function App() {
 
               {/* Sub-Tab 4: Top Customers */}
               {reportSubTab === "customers" && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-4">
+                <div className="ember-card p-6 space-y-6">
+                  <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider border-b border-[var(--ember-border)] pb-4">
                     Top 10 Customers Revenue Ranking
                   </h3>
 
-                  <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                  <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
                     <table className="w-full text-left border-collapse">
                       <thead>
-                        <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                        <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                           <th className="p-3 w-16 text-center">Rank</th>
                           <th className="p-3">Customer Code</th>
                           <th className="p-3">Customer Name</th>
@@ -1913,21 +1923,21 @@ function App() {
                           <th className="p-3 text-right">Total Revenue (₹)</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800/60">
+                      <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                         {topCustomers.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="p-6 text-center text-slate-500">
+                            <td colSpan={5} className="p-6 text-center text-[var(--ember-text-muted)]">
                               No customer revenue data for selected date range filter.
                             </td>
                           </tr>
                         ) : (
                           topCustomers.map((row) => (
-                            <tr key={row.rank} className="hover:bg-slate-900/30 text-slate-300">
-                              <td className="p-3 text-center font-bold text-indigo-400">#{row.rank}</td>
-                              <td className="p-3 font-mono font-semibold text-slate-200">{row.code}</td>
-                              <td className="p-3 text-slate-200 font-medium">{row.name}</td>
-                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
-                              <td className="p-3 text-right font-mono font-bold text-emerald-400">
+                            <tr key={row.rank} className="hover:bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] transition-colors">
+                              <td className="p-3 text-center font-bold font-mono text-[var(--ember-primary)]">#{row.rank}</td>
+                              <td className="p-3 font-mono font-semibold text-[var(--ember-text-primary)]">{row.code}</td>
+                              <td className="p-3 text-[var(--ember-text-primary)] font-medium">{row.name}</td>
+                              <td className="p-3 text-right font-mono text-[var(--ember-text-muted)]">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">
                                 ₹{row.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </td>
                             </tr>
@@ -1941,15 +1951,15 @@ function App() {
 
               {/* Sub-Tab 5: Top Part Numbers */}
               {reportSubTab === "items" && (
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400 border-b border-slate-800 pb-4">
+                <div className="ember-card p-6 space-y-6">
+                  <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider border-b border-[var(--ember-border)] pb-4">
                     Top Part Numbers Sales Matrix
                   </h3>
 
-                  <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden text-xs">
+                  <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
                     <table className="w-full text-left border-collapse">
                       <thead>
-                        <tr className="bg-slate-900 text-slate-400 font-semibold border-b border-slate-800">
+                        <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                           <th className="p-3 w-16 text-center">Rank</th>
                           <th className="p-3">Part Code</th>
                           <th className="p-3">Part Description</th>
@@ -1958,22 +1968,22 @@ function App() {
                           <th className="p-3 text-right">Total Revenue (₹)</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800/60">
+                      <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                         {topItems.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="p-6 text-center text-slate-500">
+                            <td colSpan={6} className="p-6 text-center text-[var(--ember-text-muted)]">
                               No part sales data for selected date range filter.
                             </td>
                           </tr>
                         ) : (
                           topItems.map((row) => (
-                            <tr key={row.rank} className="hover:bg-slate-900/30 text-slate-300">
-                              <td className="p-3 text-center font-bold text-indigo-400">#{row.rank}</td>
-                              <td className="p-3 font-mono font-semibold text-slate-200">{row.code}</td>
-                              <td className="p-3 text-slate-200 font-medium">{row.name}</td>
-                              <td className="p-3 text-right font-mono text-slate-400">{row.total_qty.toLocaleString()}</td>
-                              <td className="p-3 text-right font-mono text-slate-400">{row.invoice_count}</td>
-                              <td className="p-3 text-right font-mono font-bold text-emerald-400">
+                            <tr key={row.rank} className="hover:bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] transition-colors">
+                              <td className="p-3 text-center font-bold font-mono text-[var(--ember-primary)]">#{row.rank}</td>
+                              <td className="p-3 font-mono font-semibold text-[var(--ember-text-primary)]">{row.code}</td>
+                              <td className="p-3 text-[var(--ember-text-primary)] font-medium">{row.name}</td>
+                              <td className="p-3 text-right font-mono text-[var(--ember-text-muted)]">{row.total_qty.toLocaleString()}</td>
+                              <td className="p-3 text-right font-mono text-[var(--ember-text-muted)]">{row.invoice_count}</td>
+                              <td className="p-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">
                                 ₹{row.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </td>
                             </tr>
@@ -1988,260 +1998,335 @@ function App() {
           )}
 
           {activeTab === "settings" && (
-            <div className="space-y-8 max-w-3xl">
-              {/* Profile setup card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-bold text-slate-200 mb-6 uppercase tracking-wider text-indigo-400">Database Connection Switcher</h3>
-
-                <div className="space-y-4 mb-6">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2">Company Code Profile</label>
-                    <input
-                      type="text"
-                      value={companyCode}
-                      onChange={(e) => setCompanyCode(e.target.value.trim().toUpperCase())}
-                      disabled={isConnected}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-2">SQLCipher Encryption Password</label>
-                    <input
-                      type="password"
-                      value={encryptionKey}
-                      onChange={(e) => setEncryptionKey(e.target.value)}
-                      disabled={isConnected}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-                    />
-                  </div>
+            <div className="space-y-4 w-full">
+              {/* Settings Customization Header Bar */}
+              <div className="flex items-center justify-between text-xs px-1">
+                <div className="flex items-center gap-2 text-[var(--ember-text-secondary)]">
+                  <LayoutGrid className="w-4 h-4 text-[var(--ember-primary)]" />
+                  <span className="font-semibold text-[var(--ember-text-primary)]">Customizable Settings Grid</span>
+                  <span className="text-[10px] text-[var(--ember-text-muted)] italic">
+                    (Drag handle to reorder cards • Click 1x/2x/Full to resize)
+                  </span>
                 </div>
 
-                <div className="flex justify-end pt-4 border-t border-slate-800">
-                  {isConnected ? (
-                    <button
-                      onClick={handleDisconnect}
-                      className="bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors flex items-center gap-1.5"
-                    >
-                      Disconnect Profile Connection
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleConnect}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors"
-                    >
-                      Connect & Authenticate Profile
-                    </button>
-                  )}
-                </div>
+                <button
+                  onClick={resetSettingsLayout}
+                  className="ember-btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5 cursor-pointer"
+                  title="Restore default settings arrangement"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset Settings Layout
+                </button>
               </div>
 
-              <CompanyProfileForm />
+              {/* Dynamic Settings Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {settingsLayout.map((item) => {
+                  switch (item.id) {
+                    case "company_profile":
+                      return (
+                        <DraggableCard
+                          key={item.id}
+                          id={item.id}
+                          title="Company Profile Master"
+                          colSpan={item.colSpan}
+                          onColSpanChange={handleSettingsColSpanChange}
+                          onDragStart={handleSettingsDragStart}
+                          onDragOver={(_e, _id) => {}}
+                          onDrop={handleSettingsDrop}
+                          isDragging={draggedSettingsId === item.id}
+                        >
+                          <CompanyProfileForm />
+                        </DraggableCard>
+                      );
 
-              {/* Tally Register Code Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-100 font-mono tracking-wide">tally_register_code</h3>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Register code (RE) written on every generated Tally row — meaning unconfirmed upstream, kept as a constant
-                  </p>
-                </div>
+                    case "db_switcher":
+                      return (
+                        <DraggableCard
+                          key={item.id}
+                          id={item.id}
+                          title="Database Connection Switcher"
+                          colSpan={item.colSpan}
+                          onColSpanChange={handleSettingsColSpanChange}
+                          onDragStart={handleSettingsDragStart}
+                          onDragOver={(_e, _id) => {}}
+                          onDrop={handleSettingsDrop}
+                          isDragging={draggedSettingsId === item.id}
+                        >
+                          <div className="space-y-4 flex flex-col justify-between flex-1">
+                            <div>
+                              <p className="text-xs text-[var(--ember-text-muted)] mb-4">
+                                Authenticate and switch encrypted SQLite connection profiles.
+                              </p>
+                              <div className="space-y-3">
+                                <div>
+                                  <label className="block text-xs font-semibold text-[var(--ember-text-secondary)] mb-1">
+                                    Company Code Profile
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={companyCode}
+                                    onChange={(e) => setCompanyCode(e.target.value.trim().toUpperCase())}
+                                    disabled={isConnected}
+                                    className="w-full ember-input p-2.5 text-xs font-mono disabled:opacity-50"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold text-[var(--ember-text-secondary)] mb-1">
+                                    SQLCipher Encryption Password
+                                  </label>
+                                  <input
+                                    type="password"
+                                    value={encryptionKey}
+                                    onChange={(e) => setEncryptionKey(e.target.value)}
+                                    disabled={isConnected}
+                                    className="w-full ember-input p-2.5 text-xs font-mono disabled:opacity-50"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="pt-4 border-t border-[var(--ember-border)]">
+                              {isConnected ? (
+                                <button
+                                  onClick={handleDisconnect}
+                                  className="bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer w-full"
+                                >
+                                  Disconnect Profile Connection
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={handleConnect}
+                                  className="ember-btn-primary px-5 py-2.5 text-xs cursor-pointer w-full justify-center"
+                                >
+                                  Connect & Authenticate Profile
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </DraggableCard>
+                      );
 
-                <div className="flex items-center gap-3 pt-2">
-                  <input
-                    type="text"
-                    value={tallyRegisterCode}
-                    onChange={(e) => setTallyRegisterCode(e.target.value.toUpperCase())}
-                    placeholder="TF"
-                    className="w-48 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-sm font-mono text-slate-100 focus:outline-none focus:border-indigo-500 font-bold"
-                  />
-                  <button
-                    onClick={handleSaveTallyRegisterCode}
-                    disabled={isSavingRegisterCode}
-                    className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors border border-slate-700 flex items-center gap-1.5"
-                  >
-                    {isSavingRegisterCode ? "Saving..." : "Save"}
-                  </button>
-                </div>
+                    case "tally_code":
+                      return (
+                        <DraggableCard
+                          key={item.id}
+                          id={item.id}
+                          title="Tally Register Code Setting"
+                          colSpan={item.colSpan}
+                          onColSpanChange={handleSettingsColSpanChange}
+                          onDragStart={handleSettingsDragStart}
+                          onDragOver={(_e, _id) => {}}
+                          onDrop={handleSettingsDrop}
+                          isDragging={draggedSettingsId === item.id}
+                        >
+                          <div className="space-y-4 flex flex-col justify-between flex-1">
+                            <div>
+                              <h5 className="text-xs font-bold font-mono text-[var(--ember-primary)]">tally_register_code</h5>
+                              <p className="text-xs text-[var(--ember-text-muted)] mt-1">
+                                Register code (RE) written on every generated Tally export row — unconfirmed upstream constant.
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3 pt-2">
+                              <input
+                                type="text"
+                                value={tallyRegisterCode}
+                                onChange={(e) => setTallyRegisterCode(e.target.value.toUpperCase())}
+                                placeholder="TF"
+                                className="w-36 ember-input p-2.5 text-sm font-mono font-bold"
+                              />
+                              <button
+                                onClick={handleSaveTallyRegisterCode}
+                                disabled={isSavingRegisterCode}
+                                className="ember-btn-secondary px-5 py-2.5 text-xs cursor-pointer flex-1 justify-center"
+                              >
+                                {isSavingRegisterCode ? "Saving..." : "Save"}
+                              </button>
+                            </div>
+                          </div>
+                        </DraggableCard>
+                      );
+
+                    case "db_maintenance":
+                      return (
+                        <DraggableCard
+                          key={item.id}
+                          id={item.id}
+                          title="Database File Maintenance"
+                          colSpan={item.colSpan}
+                          onColSpanChange={handleSettingsColSpanChange}
+                          onDragStart={handleSettingsDragStart}
+                          onDragOver={(_e, _id) => {}}
+                          onDrop={handleSettingsDrop}
+                          isDragging={draggedSettingsId === item.id}
+                        >
+                          <div className="space-y-4 flex flex-col justify-between flex-1">
+                            <p className="text-xs text-[var(--ember-text-muted)]">
+                              SQLite integrity verification and VACUUM defragmentation.
+                            </p>
+                            <div className="space-y-3">
+                              <div className="bg-[var(--ember-surface-raised)] p-3 rounded-xl border border-[var(--ember-border)] space-y-2">
+                                <h5 className="text-xs font-bold text-[var(--ember-text-primary)] flex items-center gap-1.5">
+                                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Integrity Check
+                                </h5>
+                                <button
+                                  onClick={handleCheckIntegrity}
+                                  disabled={isCheckingIntegrity}
+                                  className="w-full ember-btn-secondary py-1.5 text-xs cursor-pointer flex items-center justify-center gap-2"
+                                >
+                                  {isCheckingIntegrity ? "Verifying..." : "Run PRAGMA Integrity Check"}
+                                </button>
+                              </div>
+                              <div className="bg-[var(--ember-surface-raised)] p-3 rounded-xl border border-[var(--ember-border)] space-y-2">
+                                <h5 className="text-xs font-bold text-[var(--ember-text-primary)] flex items-center gap-1.5">
+                                  <RefreshCw className="w-3.5 h-3.5 text-[var(--ember-primary)]" /> Storage Defrag
+                                </h5>
+                                <button
+                                  onClick={handleVacuumDb}
+                                  disabled={isVacuuming}
+                                  className="w-full ember-btn-primary py-1.5 text-xs cursor-pointer flex items-center justify-center gap-2"
+                                >
+                                  {isVacuuming ? "Optimizing..." : "Execute VACUUM & ANALYZE"}
+                                </button>
+                              </div>
+                            </div>
+                            {maintenanceResult && (
+                              <div className={`p-3 rounded-xl border text-[11px] ${
+                                maintenanceResult.status === "HEALTHY" || maintenanceResult.status === "OPTIMIZED"
+                                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200"
+                                  : "bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200"
+                              }`}>
+                                <div className="font-bold">{maintenanceResult.routine} [{maintenanceResult.status}]</div>
+                                <p className="mt-0.5">{maintenanceResult.details}</p>
+                              </div>
+                            )}
+                          </div>
+                        </DraggableCard>
+                      );
+
+                    case "backup_manager":
+                      return (
+                        <DraggableCard
+                          key={item.id}
+                          id={item.id}
+                          title="Backup & Recovery Manager"
+                          colSpan={item.colSpan}
+                          onColSpanChange={handleSettingsColSpanChange}
+                          onDragStart={handleSettingsDragStart}
+                          onDragOver={(_e, _id) => {}}
+                          onDrop={handleSettingsDrop}
+                          isDragging={draggedSettingsId === item.id}
+                        >
+                          <div className="space-y-4 flex flex-col justify-between flex-1">
+                            <p className="text-xs text-[var(--ember-text-muted)]">
+                              Export encrypted database backups for disaster recovery.
+                            </p>
+
+                            {backupStatus && backupStatus.is_backup_due && (
+                              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex gap-2 text-amber-800 dark:text-amber-200 text-xs">
+                                <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                                <div>
+                                  <h5 className="font-bold">Backup Recommended</h5>
+                                  <p className="text-[11px] mt-0.5">
+                                    {backupStatus.days_since_backup} days since last recorded backup.
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="bg-[var(--ember-surface-raised)] p-3 rounded-xl border border-[var(--ember-border)] space-y-2">
+                              <div className="text-[11px] text-[var(--ember-text-muted)] font-mono">
+                                <p>Profile: {companyCode}</p>
+                                <p>Last: {backupStatus?.last_backup_at ? new Date(backupStatus.last_backup_at).toLocaleDateString() : "Never"}</p>
+                              </div>
+                              <button
+                                onClick={handleCreateBackup}
+                                disabled={isBackingUp}
+                                className="ember-btn-primary px-4 py-2 text-xs flex items-center justify-center gap-2 cursor-pointer w-full"
+                              >
+                                {isBackingUp ? "Compiling Backup..." : "Create Instant Backup"}
+                              </button>
+                            </div>
+                          </div>
+                        </DraggableCard>
+                      );
+
+                    case "app_updater":
+                      return (
+                        <DraggableCard
+                          key={item.id}
+                          id={item.id}
+                          title="Application Updater"
+                          colSpan={item.colSpan}
+                          onColSpanChange={handleSettingsColSpanChange}
+                          onDragStart={handleSettingsDragStart}
+                          onDragOver={(_e, _id) => {}}
+                          onDrop={handleSettingsDrop}
+                          isDragging={draggedSettingsId === item.id}
+                        >
+                          <UpdateCard />
+                        </DraggableCard>
+                      );
+
+                    default:
+                      return null;
+                  }
+                })}
               </div>
-
-              {/* Maintenance Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">Database File Maintenance</h3>
-                    <p className="text-xs text-slate-400 mt-1">Run SQLite integrity verification checks and storage defragmentation (VACUUM & ANALYZE).</p>
-                  </div>
-                  <ShieldCheck className="w-5 h-5 text-indigo-400" />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                    <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 text-emerald-400" /> Integrity Verification
-                    </h4>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Scans B-Tree structures, index pages, and foreign keys using PRAGMA integrity_check to ensure file consistency.
-                    </p>
-                    <button
-                      onClick={handleCheckIntegrity}
-                      disabled={isCheckingIntegrity}
-                      className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
-                    >
-                      {isCheckingIntegrity ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Verifying File...
-                        </>
-                      ) : (
-                        "Run PRAGMA Integrity Check"
-                      )}
-                    </button>
-                  </div>
-
-                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                    <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                      <RefreshCw className="w-4 h-4 text-indigo-400" /> Storage Defragmentation
-                    </h4>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Executes VACUUM to reclaim deleted invoice storage space and updates query optimization statistics via ANALYZE.
-                    </p>
-                    <button
-                      onClick={handleVacuumDb}
-                      disabled={isVacuuming}
-                      className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
-                    >
-                      {isVacuuming ? (
-                        <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Optimizing DB...
-                        </>
-                      ) : (
-                        "Execute VACUUM & ANALYZE"
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {maintenanceResult && (
-                  <div className={`p-4 rounded-xl border text-xs ${
-                    maintenanceResult.status === "HEALTHY" || maintenanceResult.status === "OPTIMIZED"
-                      ? "bg-emerald-950/20 border-emerald-900/60 text-emerald-200"
-                      : "bg-rose-950/20 border-rose-900/60 text-rose-200"
-                  }`}>
-                    <div className="flex items-center justify-between font-bold text-slate-200">
-                      <span>{maintenanceResult.routine} [{maintenanceResult.status}]</span>
-                      <span className="font-mono text-[10px] text-slate-400">{maintenanceResult.duration_ms?.toString()} ms</span>
-                    </div>
-                    <p className="text-slate-400 mt-1">{maintenanceResult.details}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Backup & Recovery Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400">Database Backup & Recovery Manager</h3>
-                    <p className="text-xs text-slate-400 mt-1">Export encrypted database backups with metadata headers for disaster recovery.</p>
-                  </div>
-                  <Download className="w-5 h-5 text-indigo-400" />
-                </div>
-
-                {backupStatus && backupStatus.is_backup_due && (
-                  <div className="bg-amber-950/20 border border-amber-900/60 rounded-xl p-4 flex gap-4 text-amber-200 text-xs">
-                    <AlertTriangle className="w-5 h-5 flex-shrink-0 text-amber-400 mt-0.5" />
-                    <div>
-                      <h4 className="font-bold text-slate-200">Backup Recommended</h4>
-                      <p className="text-slate-400 mt-0.5">
-                        It has been {backupStatus.days_since_backup} days since your last recorded backup. Create a backup to protect your sales records.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between">
-                  <div className="text-xs text-slate-400">
-                    <p className="font-semibold text-slate-200">Active Profile: {companyCode}</p>
-                    <p className="text-[11px] mt-0.5">
-                      Last Backup: {backupStatus?.last_backup_at ? new Date(backupStatus.last_backup_at).toLocaleString() : "Never recorded"}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={handleCreateBackup}
-                    disabled={isBackingUp}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs px-5 py-2.5 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    {isBackingUp ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" /> Compiling Backup...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4" /> Create Instant Backup
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Updater configuration setting card */}
-              <UpdateCard />
             </div>
           )}
         </div>
 
         {/* Invoice Details Drawer Inspector */}
         {isDetailOpen && (
-          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex justify-end transition-all duration-300">
-            <div className="w-full max-w-3xl bg-slate-900 border-l border-slate-850 h-full flex flex-col shadow-2xl overflow-y-auto">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-end transition-all duration-300">
+            <div className="w-full max-w-3xl bg-[var(--ember-surface)] border-l border-[var(--ember-border)] h-full flex flex-col shadow-2xl overflow-y-auto">
               {loadingDetails ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-                  <RefreshCw className="w-8 h-8 animate-spin text-indigo-400 mb-3" />
+                <div className="flex-1 flex flex-col items-center justify-center text-[var(--ember-text-muted)]">
+                  <RefreshCw className="w-8 h-8 animate-spin text-[var(--ember-primary)] mb-3" />
                   <span>Loading invoice record and lines...</span>
                 </div>
               ) : selectedInvoice ? (
                 <div className="flex-1 flex flex-col justify-between">
-                  <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-950/20">
+                  <div className="p-6 border-b border-[var(--ember-border)] flex items-center justify-between bg-[var(--ember-surface-raised)]">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
+                      <div className="p-2 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-lg">
                         <FileText className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Invoice Details</span>
-                        <h3 className="text-base font-bold text-slate-200 font-mono">No. {selectedInvoice.invoice_number}</h3>
+                        <span className="text-[10px] text-[var(--ember-text-muted)] font-bold uppercase tracking-wider">Invoice Details</span>
+                        <h3 className="text-base font-bold font-serif text-[var(--ember-text-primary)]">No. {selectedInvoice.invoice_number}</h3>
                       </div>
                     </div>
                     <button
                       onClick={() => setIsDetailOpen(false)}
-                      className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition-colors text-xs font-semibold"
+                      className="ember-btn-secondary px-3 py-1.5 text-xs"
                     >
                       Close Inspector
                     </button>
                   </div>
 
                   <div className="p-6 flex-1 space-y-6">
-                    <div className="grid grid-cols-3 gap-6 bg-slate-950/30 p-4 rounded-xl border border-slate-800">
+                    <div className="grid grid-cols-3 gap-6 bg-[var(--ember-surface-raised)] p-4 rounded-xl border border-[var(--ember-border)]">
                       <div>
-                        <span className="text-[10px] text-slate-500 font-semibold block">Invoice Date</span>
-                        <span className="text-xs text-slate-300 mt-1 inline-flex items-center gap-1">
-                          <Calendar className="w-3.5 h-3.5 text-slate-400" /> {selectedInvoice.invoice_date}
+                        <span className="text-[10px] text-[var(--ember-text-muted)] font-semibold block">Invoice Date</span>
+                        <span className="text-xs text-[var(--ember-text-primary)] font-mono mt-1 inline-flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5 text-[var(--ember-text-muted)]" /> {selectedInvoice.invoice_date}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 font-semibold block">Supply Destination</span>
-                        <span className="text-xs text-slate-300 mt-1 block truncate">
+                        <span className="text-[10px] text-[var(--ember-text-muted)] font-semibold block">Supply Destination</span>
+                        <span className="text-xs text-[var(--ember-text-primary)] mt-1 block truncate">
                           {selectedInvoice.place_of_supply || "Not Specified"}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 font-semibold block">Active Status</span>
+                        <span className="text-[10px] text-[var(--ember-text-muted)] font-semibold block">Active Status</span>
                         <span
-                          className={`mt-1 inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                          className={`mt-1 inline-block px-2.5 py-1 ember-chip ${
                             selectedInvoice.status === "Verified"
-                              ? "bg-emerald-500/10 text-emerald-400"
+                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
                               : selectedInvoice.status === "Cancelled"
-                              ? "bg-rose-500/10 text-rose-400"
-                              : "bg-indigo-500/10 text-indigo-400"
+                              ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30"
+                              : "bg-orange-500/15 text-[var(--ember-primary)] border border-orange-500/30"
                           }`}
                         >
                           {selectedInvoice.status}
@@ -2249,39 +2334,39 @@ function App() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-4 gap-4 bg-slate-950/10 p-4 rounded-xl border border-slate-800/80">
+                    <div className="grid grid-cols-4 gap-4 bg-[var(--ember-surface-raised)] p-4 rounded-xl border border-[var(--ember-border)]">
                       <div>
-                        <span className="text-[10px] text-slate-500 block">Taxable Total</span>
-                        <span className="text-sm font-bold text-slate-200 font-mono">
+                        <span className="text-[10px] text-[var(--ember-text-muted)] block">Taxable Total</span>
+                        <span className="text-sm font-bold text-[var(--ember-text-primary)] font-mono">
                           ₹{selectedInvoice.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block">CGST Total</span>
-                        <span className="text-sm font-mono text-slate-400">
+                        <span className="text-[10px] text-[var(--ember-text-muted)] block">CGST Total</span>
+                        <span className="text-sm font-mono text-[var(--ember-text-secondary)]">
                           ₹{selectedInvoice.total_cgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block">SGST Total</span>
-                        <span className="text-sm font-mono text-slate-400">
+                        <span className="text-[10px] text-[var(--ember-text-muted)] block">SGST Total</span>
+                        <span className="text-sm font-mono text-[var(--ember-text-secondary)]">
                           ₹{selectedInvoice.total_sgst.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block">Total Value</span>
-                        <span className="text-sm font-bold text-indigo-400 font-mono">
+                        <span className="text-[10px] text-[var(--ember-text-muted)] block">Total Value</span>
+                        <span className="text-sm font-bold text-[var(--ember-primary)] font-mono">
                           ₹{selectedInvoice.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                     </div>
 
                     <div className="space-y-2">
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Invoice Line Items</h4>
-                      <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-950/20 text-xs">
+                      <h4 className="text-xs font-bold font-serif text-[var(--ember-text-primary)] uppercase tracking-wider">Invoice Line Items</h4>
+                      <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
                         <table className="w-full text-left border-collapse">
                           <thead>
-                            <tr className="bg-slate-950 text-slate-400 font-bold border-b border-slate-800">
+                            <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                               <th className="p-3">Part Details</th>
                               <th className="p-3 text-right">Qty</th>
                               <th className="p-3 text-right">Rate</th>
@@ -2289,16 +2374,16 @@ function App() {
                               <th className="p-3 text-right">Gross</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-800/60">
+                          <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                             {selectedInvoiceItems.map((item, idx) => (
-                              <tr key={idx} className="hover:bg-slate-800/10">
+                              <tr key={idx} className="hover:bg-[var(--ember-surface)] transition-colors">
                                 <td className="p-3">
-                                  <div className="font-semibold text-slate-200">{item.part_code}</div>
+                                  <div className="font-semibold text-[var(--ember-text-primary)]">{item.part_code}</div>
                                 </td>
-                                <td className="p-3 text-right font-mono text-slate-300">{item.quantity}</td>
-                                <td className="p-3 text-right font-mono text-slate-400">₹{item.rate_pre_unit.toFixed(2)}</td>
-                                <td className="p-3 text-right font-mono text-slate-300">₹{item.assessable_value.toFixed(2)}</td>
-                                <td className="p-3 text-right font-mono font-bold text-slate-100">₹{item.total_value.toFixed(2)}</td>
+                                <td className="p-3 text-right font-mono text-[var(--ember-text-secondary)]">{item.quantity}</td>
+                                <td className="p-3 text-right font-mono text-[var(--ember-text-muted)]">₹{item.rate_pre_unit.toFixed(2)}</td>
+                                <td className="p-3 text-right font-mono text-[var(--ember-text-secondary)]">₹{item.assessable_value.toFixed(2)}</td>
+                                <td className="p-3 text-right font-mono font-bold text-[var(--ember-primary)]">₹{item.total_value.toFixed(2)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2307,26 +2392,26 @@ function App() {
                     </div>
 
                     <div className="space-y-2">
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <Clock className="w-4 h-4 text-indigo-400" /> Audit Log History
+                      <h4 className="text-xs font-bold font-serif text-[var(--ember-text-primary)] uppercase tracking-wider flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-[var(--ember-primary)]" /> Audit Log History
                       </h4>
                       {selectedInvoiceAuditLogs.length === 0 ? (
-                        <p className="text-[10px] text-slate-500 italic bg-slate-950/20 p-3 rounded-lg border border-slate-800/40">
+                        <p className="text-[10px] text-[var(--ember-text-muted)] italic bg-[var(--ember-surface-raised)] p-3 rounded-lg border border-[var(--ember-border)]">
                           No modification logs found for this invoice.
                         </p>
                       ) : (
-                        <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-950/20 text-[10px]">
+                        <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-[10px]">
                           <table className="w-full text-left border-collapse">
                             <thead>
-                              <tr className="bg-slate-950 text-slate-400 font-bold border-b border-slate-800">
+                              <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
                                 <th className="p-3">Timestamp</th>
                                 <th className="p-3">User Action</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-800/60">
+                            <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                               {selectedInvoiceAuditLogs.map((log, idx) => (
-                                <tr key={idx} className="hover:bg-slate-800/10 text-slate-300">
-                                  <td className="p-3 text-slate-500 font-mono">{log.timestamp}</td>
+                                <tr key={idx} className="hover:bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] transition-colors">
+                                  <td className="p-3 text-[var(--ember-text-muted)] font-mono">{log.timestamp}</td>
                                   <td className="p-3 font-medium">{log.user_action}</td>
                                 </tr>
                               ))}
@@ -2337,10 +2422,10 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="p-6 border-t border-slate-800 bg-slate-950/20 flex justify-between gap-4">
+                  <div className="p-6 border-t border-[var(--ember-border)] bg-[var(--ember-surface-raised)] flex justify-between gap-4">
                     <button
                       onClick={handleDeleteRecord}
-                      className="bg-rose-950/20 text-rose-400 border border-rose-900/40 hover:bg-rose-900/10 font-semibold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5"
+                      className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 font-semibold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" /> Delete Record
                     </button>
@@ -2349,7 +2434,7 @@ function App() {
                       {selectedInvoice.status === "Cancelled" && (
                         <button
                           onClick={handleAutoGenerateCreditNote}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5"
+                          className="ember-btn-primary px-4 py-2 text-xs flex items-center gap-1.5 cursor-pointer"
                         >
                           <PlusCircle className="w-4 h-4" /> Auto-generate Credit Note
                         </button>
@@ -2357,7 +2442,7 @@ function App() {
                       {selectedInvoice.status !== "Cancelled" && selectedInvoice.status !== "Credit Note Generated" && (
                         <button
                           onClick={() => handleUpdateStatus("Cancelled")}
-                          className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-semibold text-xs px-4 py-2 rounded-lg"
+                          className="ember-btn-secondary px-4 py-2 text-xs cursor-pointer"
                         >
                           Cancel Invoice
                         </button>
@@ -2365,7 +2450,7 @@ function App() {
                       {selectedInvoice.status !== "Verified" && selectedInvoice.status !== "Credit Note Generated" && (
                         <button
                           onClick={() => handleUpdateStatus("Verified")}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-5 py-2 rounded-lg flex items-center gap-1.5"
+                          className="ember-btn-primary px-5 py-2 text-xs flex items-center gap-1.5 cursor-pointer"
                         >
                           <CheckCircle className="w-4 h-4" /> Mark Verified
                         </button>
@@ -2380,20 +2465,20 @@ function App() {
 
         {/* Record New Revision Dialog Modal */}
         {isRevisionModalOpen && (
-          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-2xl relative">
-              <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider text-indigo-400 mb-6">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-lg ember-card p-6 shadow-2xl relative">
+              <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] uppercase tracking-wider mb-6">
                 Record Supplier Price Revision
               </h3>
 
               <form onSubmit={handleCreateRevision} className="space-y-4 text-xs">
                 <div>
-                  <label className="block text-slate-400 mb-1.5 font-semibold">Select Supplier</label>
+                  <label className="block text-[var(--ember-text-secondary)] mb-1.5 font-semibold">Select Supplier</label>
                   <select
                     required
                     value={revSupplierId}
                     onChange={(e) => setRevSupplierId(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                    className="w-full ember-input p-2.5"
                   >
                     <option value="">-- Choose Supplier --</option>
                     {suppliers.map((s) => (
@@ -2405,20 +2490,20 @@ function App() {
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1.5 font-semibold">Part / Item Code</label>
+                  <label className="block text-[var(--ember-text-secondary)] mb-1.5 font-semibold">Part / Item Code</label>
                   <input
                     required
                     type="text"
                     placeholder="e.g. 8708.99.00"
                     value={revPartCode}
                     onChange={(e) => setRevPartCode(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                    className="w-full ember-input p-2.5 font-mono"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-slate-400 mb-1.5 font-semibold">Old Rate (₹)</label>
+                    <label className="block text-[var(--ember-text-secondary)] mb-1.5 font-semibold">Old Rate (₹)</label>
                     <input
                       required
                       type="number"
@@ -2426,12 +2511,12 @@ function App() {
                       placeholder="0.00"
                       value={revOldPrice}
                       onChange={(e) => setRevOldPrice(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full ember-input p-2.5 font-mono"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-slate-400 mb-1.5 font-semibold">New Rate (₹)</label>
+                    <label className="block text-[var(--ember-text-secondary)] mb-1.5 font-semibold">New Rate (₹)</label>
                     <input
                       required
                       type="number"
@@ -2439,44 +2524,44 @@ function App() {
                       placeholder="0.00"
                       value={revNewPrice}
                       onChange={(e) => setRevNewPrice(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                      className="w-full ember-input p-2.5 font-mono"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1.5 font-semibold">Effective Date</label>
+                  <label className="block text-[var(--ember-text-secondary)] mb-1.5 font-semibold">Effective Date</label>
                   <input
                     required
                     type="date"
                     value={revEffectiveDate}
                     onChange={(e) => setRevEffectiveDate(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                    className="w-full ember-input p-2.5 font-mono"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1.5 font-semibold">Remarks</label>
+                  <label className="block text-[var(--ember-text-secondary)] mb-1.5 font-semibold">Remarks</label>
                   <input
                     type="text"
                     placeholder="Enter revision reason..."
                     value={revRemarks}
                     onChange={(e) => setRevRemarks(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                    className="w-full ember-input p-2.5"
                   />
                 </div>
 
-                <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+                <div className="flex justify-end gap-3 pt-4 border-t border-[var(--ember-border)]">
                   <button
                     type="button"
                     onClick={() => setIsRevisionModalOpen(false)}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2.5 rounded font-semibold transition-colors"
+                    className="ember-btn-secondary px-4 py-2.5 text-xs cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded font-semibold transition-colors"
+                    className="ember-btn-primary px-4 py-2.5 text-xs cursor-pointer"
                   >
                     Save Revision
                   </button>

@@ -61,26 +61,32 @@ export default function CustomerImportPanel({ onClose, onImported }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="w-[520px] bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-slate-100">Import Customer Master</h3>
-          <button onClick={downloadTemplate} disabled={busy} className="text-indigo-400 hover:text-indigo-300 text-xs font-semibold disabled:opacity-50">↓ Download template (.xlsx)</button>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="w-[520px] ember-card p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-[var(--ember-border)] pb-3">
+          <h3 className="text-base font-bold font-serif text-[var(--ember-text-primary)]">Import Customer Master</h3>
+          <button onClick={downloadTemplate} disabled={busy} className="text-[var(--ember-primary)] hover:underline text-xs font-medium disabled:opacity-50">
+            ↓ Download template (.xlsx)
+          </button>
         </div>
-        <button onClick={pick} className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2 rounded-lg">Select Excel / CSV…</button>
-        {filePath && <p className="text-[11px] text-slate-500 truncate">{filePath}</p>}
-        {busy && <p className="text-xs text-indigo-400">Working…</p>}
+        <button onClick={pick} className="ember-btn-secondary px-4 py-2 text-xs w-full text-center">
+          Select Excel / CSV File…
+        </button>
+        {filePath && <p className="text-[11px] text-[var(--ember-text-muted)] truncate font-mono">{filePath}</p>}
+        {busy && <p className="text-xs text-[var(--ember-primary)] animate-pulse">Processing preview…</p>}
         {preview && (
-          <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 text-xs text-slate-300 space-y-1">
-            <div>Rows: <strong>{preview.row_count}</strong></div>
-            <div>To insert: <strong className="text-emerald-400">{preview.to_insert}</strong></div>
-            <div>To update: <strong className="text-indigo-400">{preview.to_update}</strong></div>
-            <div>Errors: <strong className="text-rose-400">{preview.errors.length}</strong>, Warnings: <strong className="text-amber-400">{preview.warnings.length}</strong></div>
+          <div className="bg-[var(--ember-surface-raised)] border border-[var(--ember-border)] rounded-lg p-4 text-xs text-[var(--ember-text-secondary)] space-y-1.5">
+            <div>Rows in file: <strong className="text-[var(--ember-text-primary)] font-mono">{preview.row_count}</strong></div>
+            <div>To insert: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{preview.to_insert}</strong></div>
+            <div>To update: <strong className="text-[var(--ember-primary)] font-mono">{preview.to_update}</strong></div>
+            <div>Errors: <strong className="text-rose-600 dark:text-rose-400 font-mono">{preview.errors.length}</strong>, Warnings: <strong className="text-amber-600 dark:text-amber-400 font-mono">{preview.warnings.length}</strong></div>
           </div>
         )}
-        <div className="flex gap-3">
-          <button onClick={commit} disabled={!preview || busy || preview.to_insert + preview.to_update === 0} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-5 py-2 rounded-lg disabled:opacity-50">Confirm Import</button>
-          <button onClick={onClose} className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-5 py-2 rounded-lg">Close</button>
+        <div className="flex gap-3 pt-2">
+          <button onClick={commit} disabled={!preview || busy || preview.to_insert + preview.to_update === 0} className="ember-btn-primary px-5 py-2 text-xs disabled:opacity-50">
+            Confirm Import
+          </button>
+          <button onClick={onClose} className="ember-btn-secondary px-5 py-2 text-xs">Close</button>
         </div>
       </div>
     </div>

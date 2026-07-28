@@ -38,31 +38,31 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   };
 
   return (
-    <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
-      <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+    <div className="space-y-3 bg-[var(--ember-surface-raised)] p-4 rounded-xl border border-[var(--ember-border)]">
+      <div className="flex items-center justify-between text-xs font-semibold text-[var(--ember-text-primary)]">
         <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[var(--ember-primary)] animate-pulse" />
           Downloading Update Package...
         </span>
-        <span className="font-mono text-indigo-400">{percentage}%</span>
+        <span className="font-mono text-[var(--ember-primary)] font-bold">{percentage}%</span>
       </div>
 
-      {/* Progress Track */}
-      <div className="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-800">
+      {/* Progress Track (Ember Studio: rounded-full 9999px) */}
+      <div className="w-full bg-[var(--ember-surface)] rounded-full h-2.5 overflow-hidden border border-[var(--ember-border)]">
         <div
-          className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 h-full rounded-full transition-all duration-300 ease-out"
+          className="bg-gradient-to-r from-amber-500 via-[var(--ember-primary)] to-orange-700 h-full rounded-full transition-all duration-300 ease-out"
           style={{ width: `${percentage}%` }}
         />
       </div>
 
       {/* Metrics Row */}
-      <div className="flex justify-between items-center text-[10px] text-slate-400 font-medium">
+      <div className="flex justify-between items-center text-[10px] text-[var(--ember-text-secondary)] font-medium">
         <span>
           {formatBytes(downloadedBytes)} / {totalBytes > 0 ? formatBytes(totalBytes) : "unknown"}
         </span>
-        <div className="flex items-center gap-3">
-          <span className="font-mono">{formatSpeed(speedBps)}</span>
-          <span className="text-slate-500">|</span>
+        <div className="flex items-center gap-3 font-mono">
+          <span>{formatSpeed(speedBps)}</span>
+          <span className="text-[var(--ember-text-muted)]">|</span>
           <span>{formatETA(etaSeconds)}</span>
         </div>
       </div>

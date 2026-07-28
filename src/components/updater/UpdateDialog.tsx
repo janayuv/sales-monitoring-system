@@ -36,7 +36,6 @@ export const UpdateDialog: React.FC = () => {
   if (!isOpen || !availableManifest) return null;
 
   const handleUpdate = async () => {
-    // Record analytics metrics
     try {
       const stored = localStorage.getItem("updater_analytics_metrics");
       const metrics = stored
@@ -48,7 +47,6 @@ export const UpdateDialog: React.FC = () => {
 
     const result = await downloadAndInstall();
     
-    // Record success/fail metrics
     try {
       const stored = localStorage.getItem("updater_analytics_metrics");
       if (stored) {
@@ -67,40 +65,40 @@ export const UpdateDialog: React.FC = () => {
 
   const handleSkip = async () => {
     await setSkippedVersion(availableManifest.version);
-    cancel(); // resets state to Idle
+    cancel();
   };
 
   const handleClose = () => {
     clearError();
-    cancel(); // resets state to Idle
+    cancel();
   };
 
   const errorMessage = error ? UpdateErrorCatalog[error.type] || error.message : "";
 
   return (
-    <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5 relative overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="ember-card w-full max-w-lg p-6 shadow-2xl space-y-5 relative overflow-hidden flex flex-col max-h-[90vh]">
         
         {/* Title Block */}
-        <div className="flex items-start gap-4 border-b border-slate-800 pb-4">
-          <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl">
+        <div className="flex items-start gap-4 border-b border-[var(--ember-border)] pb-4">
+          <div className="p-3 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-xl">
             <ArrowUpCircle className="w-6 h-6" />
           </div>
           <div>
-            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Software Update</span>
-            <h3 className="text-base font-bold text-slate-100 mt-0.5">
+            <span className="text-[10px] text-[var(--ember-text-muted)] font-bold uppercase tracking-wider">Software Update</span>
+            <h3 className="text-base font-bold font-serif text-[var(--ember-text-primary)] mt-0.5">
               New Version Available
             </h3>
           </div>
         </div>
 
         {/* Version info badge */}
-        <div className="flex items-center gap-3 text-xs bg-slate-950 p-3.5 rounded-xl border border-slate-800/80">
-          <Info className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-          <div className="text-slate-300">
-            Version <span className="font-bold text-indigo-400">v{availableManifest.version}</span> is ready to download (current version: v{buildMetadata?.app_version}).
+        <div className="flex items-center gap-3 text-xs bg-[var(--ember-surface-raised)] p-3.5 rounded-xl border border-[var(--ember-border)]">
+          <Info className="w-4 h-4 text-[var(--ember-primary)] flex-shrink-0" />
+          <div className="text-[var(--ember-text-primary)]">
+            Version <span className="font-bold text-[var(--ember-primary)]">v{availableManifest.version}</span> is ready to download (current version: v{buildMetadata?.app_version}).
             {availableManifest.pub_date && (
-              <span className="block text-[10px] text-slate-500 mt-0.5">
+              <span className="block text-[10px] text-[var(--ember-text-muted)] mt-0.5">
                 Released on {new Date(availableManifest.pub_date).toLocaleDateString()}
               </span>
             )}
@@ -108,10 +106,10 @@ export const UpdateDialog: React.FC = () => {
         </div>
 
         {/* Body content based on state */}
-        <div className="flex-1 overflow-y-auto space-y-4 pr-1.5 custom-scrollbar min-h-[100px]">
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1.5 min-h-[100px]">
           {state === "UpdateAvailable" && (
             <div className="space-y-2">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Release Notes:</span>
+              <span className="text-[10px] font-bold text-[var(--ember-text-muted)] uppercase tracking-wider">Release Notes:</span>
               <ReleaseNotes notes={availableManifest.notes || ""} />
             </div>
           )}
@@ -129,31 +127,30 @@ export const UpdateDialog: React.FC = () => {
           )}
 
           {(state === "Downloaded" || state === "Installing" || state === "Installed") && (
-            <div className="flex flex-col items-center justify-center py-6 text-center text-slate-400">
-              <RefreshCw className="w-8 h-8 animate-spin text-indigo-400 mb-3" />
+            <div className="flex flex-col items-center justify-center py-6 text-center text-[var(--ember-text-secondary)]">
+              <RefreshCw className="w-8 h-8 animate-spin text-[var(--ember-primary)] mb-3" />
               <span className="text-sm font-semibold">Installing update packages...</span>
-              <span className="text-[11px] text-slate-500 mt-1">Applying cryptographic verification signatures.</span>
+              <span className="text-[11px] text-[var(--ember-text-muted)] mt-1">Applying cryptographic verification signatures.</span>
             </div>
           )}
 
           {state === "RestartRequired" && (
-            <div className="bg-emerald-950/20 border border-emerald-900/60 rounded-xl p-5 text-center space-y-2 text-emerald-200">
-              <h4 className="font-bold text-slate-200 text-sm">Update Successfully Installed</h4>
-              <p className="text-xs text-slate-400">
+            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-5 text-center space-y-2 text-emerald-700 dark:text-emerald-300">
+              <h4 className="font-bold text-[var(--ember-text-primary)] text-sm">Update Successfully Installed</h4>
+              <p className="text-xs text-[var(--ember-text-secondary)]">
                 Please relaunch the application to load the new features and improvements.
               </p>
             </div>
           )}
 
           {state === "Failed" && error && (
-            <div className="bg-rose-950/25 border border-rose-900/60 rounded-xl p-4 flex gap-3 text-rose-200 text-xs">
-              <ShieldAlert className="w-5 h-5 flex-shrink-0 text-rose-400 mt-0.5" />
+            <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 flex gap-3 text-rose-700 dark:text-rose-300 text-xs">
+              <ShieldAlert className="w-5 h-5 flex-shrink-0 text-rose-500 mt-0.5" />
               <div>
-                <h4 className="font-bold text-slate-200">Update Operation Failed</h4>
-                <p className="text-slate-400 mt-1 leading-relaxed">{errorMessage}</p>
+                <h4 className="font-bold text-[var(--ember-text-primary)]">Update Operation Failed</h4>
+                <p className="text-[var(--ember-text-secondary)] mt-1 leading-relaxed">{errorMessage}</p>
                 
-                {/* Dynamic Recovery Mode links */}
-                <div className="mt-4 flex items-center gap-4 text-[10px] font-semibold text-indigo-400">
+                <div className="mt-4 flex items-center gap-4 text-[10px] font-semibold text-[var(--ember-primary)]">
                   <a
                     href="https://github.com/janayuv/sales-monitoring-system/releases"
                     target="_blank"
@@ -162,7 +159,7 @@ export const UpdateDialog: React.FC = () => {
                   >
                     Download Manual Installer
                   </a>
-                  <span className="text-slate-700">|</span>
+                  <span className="text-[var(--ember-text-muted)]">|</span>
                   <button
                     onClick={() => {
                       clearError();
@@ -178,25 +175,25 @@ export const UpdateDialog: React.FC = () => {
           )}
         </div>
 
-        {/* Footer actions based on state */}
-        <div className="border-t border-slate-800 pt-4 flex justify-end gap-3 text-xs font-semibold">
+        {/* Footer actions */}
+        <div className="border-t border-[var(--ember-border)] pt-4 flex justify-end gap-3 text-xs font-semibold">
           {state === "UpdateAvailable" && (
             <>
               <button
                 onClick={handleSkip}
-                className="bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-slate-300 px-4 py-2.5 rounded-lg border border-slate-850 transition-colors"
+                className="ember-btn-secondary px-4 py-2.5 text-xs text-[var(--ember-text-muted)]"
               >
                 Skip This Version
               </button>
               <button
                 onClick={handleClose}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2.5 rounded-lg border border-slate-700 transition-colors"
+                className="ember-btn-secondary px-4 py-2.5 text-xs"
               >
                 Later
               </button>
               <button
                 onClick={handleUpdate}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-lg border border-indigo-500 transition-colors"
+                className="ember-btn-primary px-5 py-2.5 text-xs"
               >
                 Update Now
               </button>
@@ -206,7 +203,7 @@ export const UpdateDialog: React.FC = () => {
           {state === "Downloading" && (
             <button
               onClick={cancel}
-              className="bg-slate-800 hover:bg-slate-750 text-slate-300 px-4 py-2.5 rounded-lg border border-slate-700 transition-colors"
+              className="ember-btn-secondary px-4 py-2.5 text-xs"
             >
               Cancel
             </button>
@@ -215,7 +212,7 @@ export const UpdateDialog: React.FC = () => {
           {state === "RestartRequired" && (
             <button
               onClick={relaunch}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-lg border border-indigo-500 transition-colors flex items-center gap-2"
+              className="ember-btn-primary px-6 py-2.5 text-xs flex items-center gap-2"
             >
               Relaunch App
             </button>
@@ -224,7 +221,7 @@ export const UpdateDialog: React.FC = () => {
           {state === "Failed" && (
             <button
               onClick={handleClose}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2.5 rounded-lg border border-slate-700 transition-colors"
+              className="ember-btn-secondary px-4 py-2.5 text-xs"
             >
               Close
             </button>
