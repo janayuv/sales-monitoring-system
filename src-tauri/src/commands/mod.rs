@@ -7,3 +7,5 @@ pub mod invoice_commands;
 pub mod maintenance_commands;
 pub mod profile_commands;
 pub mod revision_commands;
+pub mod customer_revision_commands;
+

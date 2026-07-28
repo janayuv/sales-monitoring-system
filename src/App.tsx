@@ -32,7 +32,9 @@ import {
   LayoutGrid
 } from "lucide-react";
 import { ApiService } from "./services/api";
+import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
 import { ImportPreview } from "./types/bindings/ImportPreview";
+
 import { ImportTemplateRow } from "./types/bindings/ImportTemplateRow";
 import { InvoiceSummary } from "./types/bindings/InvoiceSummary";
 import { InvoiceRow } from "./types/bindings/InvoiceRow";
@@ -71,7 +73,8 @@ function App() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
 
   // Navigation & Core States
-  const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "revisions" | "notes" | "reports" | "settings">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "cust_debit_notes" | "revisions" | "notes" | "reports" | "settings">("dashboard");
+
   const [companyCode, setCompanyCode] = useState("DEMO");
   const [encryptionKey, setEncryptionKey] = useState("demo1234");
   const [isConnected, setIsConnected] = useState(false);
@@ -812,7 +815,9 @@ function App() {
               { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
               { id: "registers", label: "Outward Registers", icon: FileSpreadsheet },
               { id: "customer_matching", label: "Customer Master", icon: Users },
+              { id: "cust_debit_notes", label: "Customer Debit Notes", icon: FileText },
               { id: "revisions", label: "Price Revisions", icon: Percent },
+
               { id: "notes", label: "Adjustment Notes", icon: Tag },
               { id: "reports", label: "Reports & Export", icon: BarChart3 },
               { id: "import", label: "Import Wizard", icon: FileUp },
@@ -889,6 +894,7 @@ function App() {
               {activeTab === "import" && "Configure Excel Outward Import"}
               {activeTab === "settings" && "Company Profile Settings"}
               {activeTab === "customer_matching" && "Customer Master Database"}
+              {activeTab === "cust_debit_notes" && "Customer Retrospective Price Revision Debit Notes"}
             </h2>
           </div>
 
@@ -903,7 +909,13 @@ function App() {
 
         {/* Dynamic Panels */}
         <div className="flex-1 p-8">
+          {activeTab === "cust_debit_notes" && (
+            <CustomerDebitNotesTab onNotify={(msg) => alert(msg)} />
+          )}
+
+
           {activeTab === "dashboard" && (
+
             <div className="space-y-8">
               {!isConnected && (
                 <div className="bg-amber-950/20 border border-amber-900/60 rounded-xl p-4 flex gap-4 text-amber-200">

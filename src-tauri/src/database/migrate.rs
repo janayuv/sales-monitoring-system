@@ -153,6 +153,313 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 );
             ",
         },
+        Migration {
+            version: 7,
+            description: "Add Customer Price Revision and Customer Debit Notes module tables",
+            rebuild: false,
+            sql: "
+                CREATE TABLE IF NOT EXISTS customer_price_master (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_id INTEGER NOT NULL DEFAULT 1,
+                    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                    part_number TEXT NOT NULL REFERENCES items(part_code) ON DELETE RESTRICT,
+                    current_price REAL NOT NULL CHECK(current_price >= 0),
+                    effective_date TEXT NOT NULL,
+                    effective_to TEXT CHECK(effective_to IS NULL OR effective_to >= effective_date),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1))
+                );
+                CREATE INDEX IF NOT EXISTS idx_cust_pm_cust_part ON customer_price_master(customer_id, part_number);
+
+                CREATE TABLE IF NOT EXISTS customer_price_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    price_master_id INTEGER REFERENCES customer_price_master(id) ON DELETE SET NULL,
+                    company_id INTEGER NOT NULL DEFAULT 1,
+                    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+                    part_number TEXT NOT NULL REFERENCES items(part_code) ON DELETE RESTRICT,
+                    old_price REAL NOT NULL CHECK(old_price >= 0),
+                    new_price REAL NOT NULL CHECK(new_price >= 0),
+                    effective_date TEXT NOT NULL,
+                    effective_to TEXT,
+                    revision_no TEXT,
+                    changed_by TEXT NOT NULL,
+                    changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS customer_price_revisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_id INTEGER NOT NULL DEFAULT 1,
+                    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+                    revision_no TEXT NOT NULL UNIQUE,
+                    effective_from TEXT NOT NULL,
+                    customer_ref_date TEXT,
+                    customer_po_ref TEXT,
+                    status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft', 'Verified', 'Approved', 'Rejected', 'Superseded')),
+                    remarks TEXT,
+                    parent_revision_id INTEGER REFERENCES customer_price_revisions(id) ON DELETE SET NULL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1))
+                );
+
+                CREATE TABLE IF NOT EXISTS customer_price_revision_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    revision_id INTEGER NOT NULL REFERENCES customer_price_revisions(id) ON DELETE CASCADE,
+                    part_number TEXT NOT NULL REFERENCES items(part_code) ON DELETE RESTRICT,
+                    old_price REAL NOT NULL CHECK(old_price >= 0),
+                    new_price REAL NOT NULL CHECK(new_price >= 0),
+                    difference REAL NOT NULL,
+                    price_source TEXT NOT NULL DEFAULT 'Manual Entry',
+                    remarks TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS customer_revision_documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    revision_id INTEGER NOT NULL REFERENCES customer_price_revisions(id) ON DELETE CASCADE,
+                    file_name TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_hash TEXT NOT NULL,
+                    uploaded_by TEXT NOT NULL,
+                    uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS customer_recovery_cases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT NOT NULL UNIQUE,
+                    company_id INTEGER NOT NULL DEFAULT 1,
+                    case_no TEXT NOT NULL UNIQUE,
+                    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+                    revision_id INTEGER NOT NULL REFERENCES customer_price_revisions(id) ON DELETE RESTRICT,
+                    financial_year_id INTEGER NOT NULL REFERENCES financial_years(id) ON DELETE RESTRICT,
+                    period_from TEXT NOT NULL,
+                    period_to TEXT NOT NULL CHECK(period_to >= period_from),
+                    total_invoices INTEGER NOT NULL DEFAULT 0 CHECK(total_invoices >= 0),
+                    total_quantity REAL NOT NULL DEFAULT 0.0 CHECK(total_quantity >= 0),
+                    total_recoverable_amount INTEGER NOT NULL DEFAULT 0 CHECK(total_recoverable_amount >= 0),
+                    recovered_amount INTEGER NOT NULL DEFAULT 0 CHECK(recovered_amount >= 0),
+                    balance_amount INTEGER NOT NULL DEFAULT 0 CHECK(balance_amount >= 0),
+                    status TEXT NOT NULL DEFAULT 'Open' CHECK(status IN ('Open', 'Partial_Recovered', 'Fully_Recovered', 'Closed', 'Cancelled')),
+                    remarks TEXT,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS customer_debit_notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    uuid TEXT NOT NULL UNIQUE,
+                    company_id INTEGER NOT NULL DEFAULT 1,
+                    case_id INTEGER NOT NULL REFERENCES customer_recovery_cases(id) ON DELETE RESTRICT,
+                    financial_year_id INTEGER NOT NULL REFERENCES financial_years(id) ON DELETE RESTRICT,
+                    debit_note_no TEXT NOT NULL UNIQUE,
+                    annexure_no TEXT NOT NULL UNIQUE,
+                    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+                    debit_note_date TEXT NOT NULL,
+                    reference TEXT,
+                    total_taxable INTEGER NOT NULL DEFAULT 0 CHECK(total_taxable >= 0),
+                    total_cgst INTEGER NOT NULL DEFAULT 0 CHECK(total_cgst >= 0),
+                    total_sgst INTEGER NOT NULL DEFAULT 0 CHECK(total_sgst >= 0),
+                    total_igst INTEGER NOT NULL DEFAULT 0 CHECK(total_igst >= 0),
+                    total_cess INTEGER NOT NULL DEFAULT 0 CHECK(total_cess >= 0),
+                    total_value INTEGER NOT NULL DEFAULT 0 CHECK(total_value >= 0),
+                    round_off INTEGER NOT NULL DEFAULT 0,
+                    currency TEXT NOT NULL DEFAULT 'INR',
+                    exchange_rate REAL NOT NULL DEFAULT 1.0 CHECK(exchange_rate > 0),
+                    exchange_rate_source TEXT NOT NULL DEFAULT 'Manual',
+                    foreign_total_value INTEGER NOT NULL DEFAULT 0 CHECK(foreign_total_value >= 0),
+                    outstanding_amount INTEGER NOT NULL DEFAULT 0 CHECK(outstanding_amount >= 0),
+                    status TEXT NOT NULL DEFAULT 'Created' CHECK(status IN ('Created', 'Verified', 'Approved', 'Posted', 'Locked', 'Cancelled', 'Reopen Requested')),
+                    financial_status TEXT NOT NULL DEFAULT 'Pending' CHECK(financial_status IN ('Pending', 'Exported to ERP', 'Posted to Ledger', 'Paid', 'Partial Paid')),
+                    template_version TEXT NOT NULL DEFAULT '1.0',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    idempotency_key TEXT UNIQUE,
+                    sent_date TEXT,
+                    payment_date TEXT,
+                    remarks TEXT,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    approved_by TEXT,
+                    approved_at TEXT,
+                    cancelled_by TEXT,
+                    cancelled_date TEXT,
+                    cancel_reason TEXT,
+                    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1)),
+                    deleted_by TEXT,
+                    deleted_at TEXT,
+                    frozen_customer_name TEXT NOT NULL,
+                    frozen_customer_gstin TEXT,
+                    frozen_customer_address TEXT,
+                    frozen_customer_state TEXT,
+                    frozen_customer_country TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_cust_dn_lookup ON customer_debit_notes(company_id, case_id, status, is_deleted);
+                CREATE INDEX IF NOT EXISTS idx_dn_cust_date ON customer_debit_notes(customer_id, debit_note_date);
+                CREATE INDEX IF NOT EXISTS idx_dn_fy_date ON customer_debit_notes(financial_year_id, debit_note_date);
+
+                CREATE TABLE IF NOT EXISTS customer_debit_note_invoice_map (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    debit_note_id INTEGER NOT NULL REFERENCES customer_debit_notes(id) ON DELETE CASCADE,
+                    invoice_id INTEGER NOT NULL,
+                    invoice_number TEXT NOT NULL,
+                    invoice_item_id INTEGER NOT NULL,
+                    part_code TEXT NOT NULL,
+                    quantity REAL NOT NULL CHECK(quantity > 0),
+                    recovered_qty REAL NOT NULL CHECK(recovered_qty >= 0),
+                    balance_qty REAL NOT NULL CHECK(balance_qty >= 0),
+                    recovery_percentage REAL NOT NULL DEFAULT 0.0 CHECK(recovery_percentage >= 0),
+                    recovered_value_percentage REAL NOT NULL DEFAULT 0.0 CHECK(recovered_value_percentage >= 0),
+                    rate_pre_unit REAL NOT NULL CHECK(rate_pre_unit >= 0),
+                    new_price REAL NOT NULL CHECK(new_price >= 0),
+                    difference REAL NOT NULL CHECK(difference >= 0),
+                    assessable_difference INTEGER NOT NULL CHECK(assessable_difference >= 0),
+                    cgst_rate REAL NOT NULL DEFAULT 0.0,
+                    cgst_amount INTEGER NOT NULL DEFAULT 0 CHECK(cgst_amount >= 0),
+                    sgst_rate REAL NOT NULL DEFAULT 0.0,
+                    sgst_amount INTEGER NOT NULL DEFAULT 0 CHECK(sgst_amount >= 0),
+                    igst_rate REAL NOT NULL DEFAULT 0.0,
+                    igst_amount INTEGER NOT NULL DEFAULT 0 CHECK(igst_amount >= 0),
+                    cess_amount INTEGER NOT NULL DEFAULT 0 CHECK(cess_amount >= 0),
+                    hsn_code TEXT NOT NULL,
+                    gst_type TEXT NOT NULL,
+                    total_difference INTEGER NOT NULL DEFAULT 0 CHECK(total_difference >= 0),
+                    currency TEXT NOT NULL DEFAULT 'INR',
+                    exchange_rate REAL NOT NULL DEFAULT 1.0 CHECK(exchange_rate > 0),
+                    foreign_total_difference INTEGER NOT NULL DEFAULT 0 CHECK(foreign_total_difference >= 0),
+                    status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft', 'Generated', 'Cancelled')),
+                    frozen_part_number TEXT NOT NULL,
+                    frozen_part_description TEXT,
+                    frozen_part_uom TEXT,
+                    frozen_part_hsn TEXT,
+                    frozen_part_drawing_revision TEXT,
+                    invoice_date TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_cdn_inv_map_dn ON customer_debit_note_invoice_map(debit_note_id);
+                CREATE INDEX IF NOT EXISTS idx_cdn_inv_map_inv ON customer_debit_note_invoice_map(invoice_number);
+
+                CREATE TABLE IF NOT EXISTS customer_debit_note_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    debit_note_id INTEGER REFERENCES customer_debit_notes(id) ON DELETE CASCADE,
+                    case_id INTEGER REFERENCES customer_recovery_cases(id) ON DELETE CASCADE,
+                    revision_id INTEGER REFERENCES customer_price_revisions(id) ON DELETE CASCADE,
+                    event_severity TEXT NOT NULL DEFAULT 'INFO' CHECK(event_severity IN ('INFO', 'WARNING', 'ERROR')),
+                    event_type TEXT NOT NULL,
+                    event_details TEXT NOT NULL,
+                    event_json TEXT,
+                    correlation_id TEXT,
+                    request_id TEXT,
+                    session_id TEXT,
+                    performed_by TEXT NOT NULL,
+                    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS background_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_uuid TEXT NOT NULL UNIQUE,
+                    job_type TEXT NOT NULL,
+                    module_name TEXT NOT NULL DEFAULT 'CustomerDebitNotes',
+                    parameters_json TEXT,
+                    status TEXT NOT NULL DEFAULT 'Queued' CHECK(status IN ('Queued', 'Processing', 'Completed', 'Failed', 'Cancelled')),
+                    progress_percent INTEGER NOT NULL DEFAULT 0 CHECK(progress_percent BETWEEN 0 AND 100),
+                    current_step TEXT,
+                    records_processed INTEGER NOT NULL DEFAULT 0,
+                    total_records INTEGER NOT NULL DEFAULT 0,
+                    result_json TEXT,
+                    error_message TEXT,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    max_retries INTEGER NOT NULL DEFAULT 3,
+                    heartbeat_at TEXT,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    started_at TEXT,
+                    completed_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS customer_debit_note_journal_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    debit_note_id INTEGER NOT NULL REFERENCES customer_debit_notes(id) ON DELETE CASCADE,
+                    journal_number TEXT NOT NULL UNIQUE,
+                    voucher_date TEXT NOT NULL,
+                    financial_year_id INTEGER NOT NULL REFERENCES financial_years(id) ON DELETE RESTRICT,
+                    currency TEXT NOT NULL DEFAULT 'INR',
+                    exchange_rate REAL NOT NULL DEFAULT 1.0 CHECK(exchange_rate > 0),
+                    account_code TEXT NOT NULL,
+                    account_name TEXT NOT NULL,
+                    entry_type TEXT NOT NULL CHECK(entry_type IN ('DEBIT', 'CREDIT')),
+                    amount INTEGER NOT NULL CHECK(amount >= 0),
+                    posting_status TEXT NOT NULL DEFAULT 'Pending' CHECK(posting_status IN ('Pending', 'Exported', 'Posted', 'Cancelled', 'Reversed')),
+                    external_sys_name TEXT,
+                    external_sys_ref TEXT,
+                    posted_by TEXT NOT NULL,
+                    posted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    posting_reference TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS customer_debit_note_approvals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    debit_note_id INTEGER NOT NULL REFERENCES customer_debit_notes(id) ON DELETE CASCADE,
+                    step_order INTEGER NOT NULL,
+                    step_name TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_name TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('Submitted', 'Verified', 'Approved', 'Rejected', 'Reopened')),
+                    remarks TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_dn_search_composite ON customer_debit_notes(company_id, customer_id, status, is_deleted);
+                CREATE INDEX IF NOT EXISTS idx_revision_search_composite ON customer_price_revisions(company_id, customer_id, status, is_deleted);
+            ",
+        },
+        Migration {
+            version: 8,
+            description: "Recreate customer_debit_note_invoice_map without foreign keys on invoices",
+            rebuild: false,
+            sql: "
+                DROP TABLE IF EXISTS customer_debit_note_invoice_map;
+
+                CREATE TABLE IF NOT EXISTS customer_debit_note_invoice_map (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    debit_note_id INTEGER NOT NULL REFERENCES customer_debit_notes(id) ON DELETE CASCADE,
+                    invoice_id INTEGER NOT NULL,
+                    invoice_number TEXT NOT NULL,
+                    invoice_item_id INTEGER NOT NULL,
+                    part_code TEXT NOT NULL,
+                    quantity REAL NOT NULL CHECK(quantity > 0),
+                    recovered_qty REAL NOT NULL CHECK(recovered_qty >= 0),
+                    balance_qty REAL NOT NULL CHECK(balance_qty >= 0),
+                    recovery_percentage REAL NOT NULL DEFAULT 0.0 CHECK(recovery_percentage >= 0),
+                    recovered_value_percentage REAL NOT NULL DEFAULT 0.0 CHECK(recovered_value_percentage >= 0),
+                    rate_pre_unit REAL NOT NULL CHECK(rate_pre_unit >= 0),
+                    new_price REAL NOT NULL CHECK(new_price >= 0),
+                    difference REAL NOT NULL CHECK(difference >= 0),
+                    assessable_difference INTEGER NOT NULL CHECK(assessable_difference >= 0),
+                    cgst_rate REAL NOT NULL DEFAULT 0.0,
+                    cgst_amount INTEGER NOT NULL DEFAULT 0 CHECK(cgst_amount >= 0),
+                    sgst_rate REAL NOT NULL DEFAULT 0.0,
+                    sgst_amount INTEGER NOT NULL DEFAULT 0 CHECK(sgst_amount >= 0),
+                    igst_rate REAL NOT NULL DEFAULT 0.0,
+                    igst_amount INTEGER NOT NULL DEFAULT 0 CHECK(igst_amount >= 0),
+                    cess_amount INTEGER NOT NULL DEFAULT 0 CHECK(cess_amount >= 0),
+                    hsn_code TEXT NOT NULL,
+                    gst_type TEXT NOT NULL,
+                    total_difference INTEGER NOT NULL DEFAULT 0 CHECK(total_difference >= 0),
+                    currency TEXT NOT NULL DEFAULT 'INR',
+                    exchange_rate REAL NOT NULL DEFAULT 1.0 CHECK(exchange_rate > 0),
+                    foreign_total_difference INTEGER NOT NULL DEFAULT 0 CHECK(foreign_total_difference >= 0),
+                    status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft', 'Generated', 'Cancelled')),
+                    frozen_part_number TEXT NOT NULL,
+                    frozen_part_description TEXT,
+                    frozen_part_uom TEXT,
+                    frozen_part_hsn TEXT,
+                    frozen_part_drawing_revision TEXT,
+                    invoice_date TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_cdn_inv_map_dn ON customer_debit_note_invoice_map(debit_note_id);
+                CREATE INDEX IF NOT EXISTS idx_cdn_inv_map_inv ON customer_debit_note_invoice_map(invoice_number);
+            ",
+        },
+
     ];
 
     // 4. Apply migrations sequentially

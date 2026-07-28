@@ -91,7 +91,25 @@ pub fn run() {
             commands::company_commands::get_company_profile,
             commands::company_commands::save_company_profile,
             commands::company_commands::read_logo_as_data_url,
+            // Customer Price Revision & Debit Notes Module
+            commands::customer_revision_commands::get_customer_price_master,
+            commands::customer_revision_commands::save_customer_price_master,
+            commands::customer_revision_commands::get_customer_price_history,
+            commands::customer_revision_commands::create_customer_price_revision,
+            commands::customer_revision_commands::get_customer_price_revisions,
+            commands::customer_revision_commands::get_customer_price_revision_details,
+            commands::customer_revision_commands::parse_customer_revision_excel,
+            commands::customer_revision_commands::export_customer_revision_template,
+            commands::customer_revision_commands::simulate_customer_debit_note_recovery,
+            commands::customer_revision_commands::generate_customer_debit_note,
+            commands::customer_revision_commands::list_customer_debit_notes,
+            commands::customer_revision_commands::get_customer_debit_note_details,
+            commands::customer_revision_commands::update_customer_debit_note_status,
+            commands::customer_revision_commands::cancel_customer_debit_note,
+            commands::customer_revision_commands::record_customer_debit_note_payment,
+            commands::customer_revision_commands::get_customer_debit_note_reports,
         ])
         .run(tauri::generate_context!())
+
         .expect("error while running tauri application");
 }

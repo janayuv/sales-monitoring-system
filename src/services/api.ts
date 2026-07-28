@@ -560,7 +560,200 @@ export class ApiService {
    * Read a picked image file and return it as a base64 `data:` URL.
    * Enforces a 512 KB cap and an image-extension allowlist server-side.
    */
+  /**
+   * Read a picked image file and return it as a base64 `data:` URL.
+   * Enforces a 512 KB cap and an image-extension allowlist server-side.
+   */
   static async readLogoAsDataUrl(filePath: string): Promise<string> {
     return await invoke<string>("read_logo_as_data_url", { filePath });
   }
+
+  // --- Customer Price Revision & Debit Notes API Wrappers ---
+
+  static async getCustomerPriceMaster(customerId?: number): Promise<any[]> {
+    return await invoke<any[]>("get_customer_price_master", { customerId: customerId || null });
+  }
+
+  static async saveCustomerPriceMaster(
+    customerId: number,
+    partNumber: string,
+    newPrice: number,
+    effectiveDate: string,
+    userName: string
+  ): Promise<void> {
+    await invoke("save_customer_price_master", {
+      customerId,
+      partNumber,
+      newPrice,
+      effectiveDate,
+      userName,
+    });
+  }
+
+  static async getCustomerPriceHistory(customerId?: number, partNumber?: string): Promise<any[]> {
+    return await invoke<any[]>("get_customer_price_history", {
+      customerId: customerId || null,
+      partNumber: partNumber || null,
+    });
+  }
+
+  static async createCustomerPriceRevision(
+    customerId: number,
+    revisionNo: string,
+    effectiveFrom: string,
+    customerReference: string | null,
+    customerReferenceDate: string | null,
+    customerPo: string | null,
+    remarks: string | null,
+    items: any[],
+    userName: string
+  ): Promise<number> {
+    return await invoke<number>("create_customer_price_revision", {
+      customerId,
+      revisionNo,
+      effectiveFrom,
+      customerReference,
+      customerReferenceDate,
+      customerPo,
+      remarks,
+      items,
+      userName,
+    });
+  }
+
+  static async getCustomerPriceRevisions(customerId?: number): Promise<any[]> {
+    return await invoke<any[]>("get_customer_price_revisions", { customerId: customerId || null });
+  }
+
+  static async getCustomerPriceRevisionDetails(revisionId: number): Promise<[any, any[]]> {
+    return await invoke<[any, any[]]>("get_customer_price_revision_details", { revisionId });
+  }
+
+  static async parseCustomerRevisionExcel(filePath: string): Promise<any> {
+    return await invoke<any>("parse_customer_revision_excel", { filePath });
+  }
+
+  static async exportCustomerRevisionTemplate(outputPath: string): Promise<void> {
+    await invoke("export_customer_revision_template", { outputPath });
+  }
+
+  static async simulateCustomerDebitNoteRecovery(
+    customerId: number,
+    periodFrom: string,
+    periodTo: string,
+    items: any[],
+    currency: string = "INR",
+    exchangeRate: number = 1.0,
+    excludedInvoiceItemIds: number[] = []
+  ): Promise<any> {
+    return await invoke<any>("simulate_customer_debit_note_recovery", {
+      customerId,
+      periodFrom,
+      periodTo,
+      items,
+      currency,
+      exchangeRate,
+      excludedInvoiceItemIds,
+    });
+  }
+
+  static async generateCustomerDebitNote(
+    customerId: number,
+    revisionId: number | null,
+    periodFrom: string,
+    periodTo: string,
+    debitNoteDate: string,
+    reference: string | null,
+    currency: string,
+    exchangeRate: number,
+    remarks: string | null,
+    idempotencyKey: string | null,
+    userName: string,
+    items: any[]
+  ): Promise<any> {
+    return await invoke<any>("generate_customer_debit_note", {
+      customerId,
+      revisionId,
+      periodFrom,
+      periodTo,
+      debitNoteDate,
+      reference,
+      currency,
+      exchangeRate,
+      remarks,
+      idempotencyKey,
+      userName,
+      items,
+    });
+  }
+
+  static async listCustomerDebitNotes(customerId?: number, statusFilter?: string): Promise<any[]> {
+    return await invoke<any[]>("list_customer_debit_notes", {
+      customerId: customerId || null,
+      statusFilter: statusFilter || null,
+    });
+  }
+
+  static async getCustomerDebitNoteDetails(debitNoteId: number): Promise<[any, any[], any[], any[]]> {
+    return await invoke<[any, any[], any[], any[]]>("get_customer_debit_note_details", { debitNoteId });
+  }
+
+  static async updateCustomerDebitNoteStatus(
+    debitNoteId: number,
+    newStatus: string,
+    actionName: string,
+    remarks: string | null,
+    userName: string
+  ): Promise<void> {
+    await invoke("update_customer_debit_note_status", {
+      debitNoteId,
+      newStatus,
+      actionName,
+      remarks,
+      userName,
+    });
+  }
+
+  static async cancelCustomerDebitNote(
+    debitNoteId: number,
+    cancelReason: string,
+    userName: string
+  ): Promise<void> {
+    await invoke("cancel_customer_debit_note", {
+      debitNoteId,
+      cancelReason,
+      userName,
+    });
+  }
+
+  static async recordCustomerDebitNotePayment(
+    debitNoteId: number,
+    paymentAmount: number,
+    paymentDate: string,
+    remarks: string | null,
+    userName: string
+  ): Promise<void> {
+    await invoke("record_customer_debit_note_payment", {
+      debitNoteId,
+      paymentAmount,
+      paymentDate,
+      remarks,
+      userName,
+    });
+  }
+
+  static async getCustomerDebitNoteReports(
+    reportType: string,
+    customerId?: number,
+    dateFrom?: string,
+    dateTo?: string
+  ): Promise<any> {
+    return await invoke<any>("get_customer_debit_note_reports", {
+      reportType,
+      customerId: customerId || null,
+      dateFrom: dateFrom || null,
+      dateTo: dateTo || null,
+    });
+  }
 }
+

@@ -346,3 +346,255 @@ pub struct AppSettingRow {
     pub key: String,
     pub value: String,
 }
+
+// --- Customer Price Revision & Debit Notes Module Structs ---
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerPriceMasterRow.ts")]
+pub struct CustomerPriceMasterRow {
+    pub id: Option<i64>,
+    pub company_id: i64,
+    pub customer_id: i64,
+    pub customer_name: Option<String>,
+    pub part_number: String,
+    pub part_description: Option<String>,
+    pub current_price: f64,
+    pub effective_date: String,
+    pub effective_to: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerPriceHistoryRow.ts")]
+pub struct CustomerPriceHistoryRow {
+    pub id: Option<i64>,
+    pub company_id: i64,
+    pub customer_id: i64,
+    pub part_number: String,
+    pub old_price: f64,
+    pub new_price: f64,
+    pub difference: f64,
+    pub effective_date: String,
+    pub revision_no: Option<String>,
+    pub changed_by: String,
+    pub changed_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerPriceRevisionRow.ts")]
+pub struct CustomerPriceRevisionRow {
+    pub id: Option<i64>,
+    pub uuid: String,
+    pub company_id: i64,
+    pub customer_id: i64,
+    pub customer_name: Option<String>,
+    pub customer_code: Option<String>,
+    pub parent_revision_id: Option<i64>,
+    pub revision_no: String,
+    pub effective_from: String,
+    pub customer_reference: Option<String>,
+    pub customer_reference_date: Option<String>,
+    pub customer_po: Option<String>,
+    pub remarks: Option<String>,
+    pub status: String,
+    pub version: i32,
+    pub workflow_version: String,
+    pub created_by: String,
+    pub created_date: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerPriceRevisionItemRow.ts")]
+pub struct CustomerPriceRevisionItemRow {
+    pub id: Option<i64>,
+    pub revision_id: i64,
+    pub part_number: String,
+    pub part_description: Option<String>,
+    pub old_price: f64,
+    pub new_price: f64,
+    pub difference: f64,
+    pub price_source: String,
+    pub remarks: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerRevisionDocumentRow.ts")]
+pub struct CustomerRevisionDocumentRow {
+    pub id: Option<i64>,
+    pub revision_id: i64,
+    pub document_type: String,
+    pub filename: String,
+    pub storage_path: String,
+    pub document_version: String,
+    pub upload_source: String,
+    pub file_size: Option<i64>,
+    pub mime_type: Option<String>,
+    pub sha256_hash: Option<String>,
+    pub uploaded_by: String,
+    pub uploaded_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerRecoveryCaseRow.ts")]
+pub struct CustomerRecoveryCaseRow {
+    pub id: Option<i64>,
+    pub uuid: String,
+    pub company_id: i64,
+    pub case_no: String,
+    pub customer_id: i64,
+    pub customer_name: Option<String>,
+    pub revision_id: Option<i64>,
+    pub financial_year_id: Option<i64>,
+    pub period_from: String,
+    pub period_to: String,
+    pub plant: Option<String>,
+    pub status: String,
+    pub version: i32,
+    pub created_by: String,
+    pub created_at: String,
+    pub total_invoices: i64,
+    pub total_quantity: f64,
+    pub total_parts: i64,
+    pub total_customers: i64,
+    pub total_recoverable_amount: f64,
+    pub recovered_amount: f64,
+    pub balance_amount: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerDebitNoteRow.ts")]
+pub struct CustomerDebitNoteRow {
+    pub id: Option<i64>,
+    pub uuid: String,
+    pub company_id: i64,
+    pub case_id: i64,
+    pub financial_year_id: i64,
+    pub debit_note_no: String,
+    pub annexure_no: String,
+    pub customer_id: i64,
+    pub customer_name: Option<String>,
+    pub customer_code: Option<String>,
+    pub debit_note_date: String,
+    pub reference: Option<String>,
+    pub total_taxable: f64,
+    pub total_cgst: f64,
+    pub total_sgst: f64,
+    pub total_igst: f64,
+    pub total_cess: f64,
+    pub total_value: f64,
+    pub round_off: f64,
+    pub currency: String,
+    pub exchange_rate: f64,
+    pub exchange_rate_source: String,
+    pub foreign_total_value: f64,
+    pub outstanding_amount: f64,
+    pub status: String,
+    pub financial_status: String,
+    pub template_version: String,
+    pub version: i32,
+    pub idempotency_key: Option<String>,
+    pub sent_date: Option<String>,
+    pub payment_date: Option<String>,
+    pub remarks: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub approved_by: Option<String>,
+    pub approved_at: Option<String>,
+    pub cancelled_by: Option<String>,
+    pub cancelled_date: Option<String>,
+    pub cancel_reason: Option<String>,
+    pub frozen_customer_name: String,
+    pub frozen_customer_gstin: Option<String>,
+    pub frozen_customer_address: Option<String>,
+    pub frozen_customer_state: Option<String>,
+    pub frozen_customer_country: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerDebitNoteInvoiceMapRow.ts")]
+pub struct CustomerDebitNoteInvoiceMapRow {
+    pub id: Option<i64>,
+    pub debit_note_id: i64,
+    pub invoice_id: i64,
+    pub invoice_number: String,
+    pub invoice_date: String,
+    pub invoice_item_id: i64,
+    pub part_code: String,
+    pub quantity: f64,
+    pub recovered_qty: f64,
+    pub balance_qty: f64,
+    pub recovery_percentage: f64,
+    pub recovered_value_percentage: f64,
+    pub rate_pre_unit: f64,
+    pub new_price: f64,
+    pub difference: f64,
+    pub assessable_difference: f64,
+    pub cgst_rate: f64,
+    pub cgst_amount: f64,
+    pub sgst_rate: f64,
+    pub sgst_amount: f64,
+    pub igst_rate: f64,
+    pub igst_amount: f64,
+    pub cess_amount: f64,
+    pub hsn_code: String,
+    pub gst_type: String,
+    pub total_difference: f64,
+    pub currency: String,
+    pub exchange_rate: f64,
+    pub foreign_total_difference: f64,
+    pub status: String,
+    pub frozen_part_number: String,
+    pub frozen_part_description: String,
+    pub frozen_part_uom: String,
+    pub frozen_part_hsn: String,
+    pub frozen_part_drawing_revision: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerDebitNoteEventRow.ts")]
+pub struct CustomerDebitNoteEventRow {
+    pub id: Option<i64>,
+    pub debit_note_id: Option<i64>,
+    pub case_id: Option<i64>,
+    pub revision_id: Option<i64>,
+    pub event_severity: String,
+    pub event_type: String,
+    pub event_details: Option<String>,
+    pub event_json: Option<String>,
+    pub correlation_id: Option<String>,
+    pub request_id: Option<String>,
+    pub session_id: Option<String>,
+    pub performed_by: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerDebitNoteSimulation.ts")]
+pub struct CustomerDebitNoteSimulation {
+    pub total_customers: usize,
+    pub total_invoices: usize,
+    pub total_parts: usize,
+    pub total_quantity: f64,
+    pub total_taxable: f64,
+    pub total_cgst: f64,
+    pub total_sgst: f64,
+    pub total_igst: f64,
+    pub total_cess: f64,
+    pub grand_total: f64,
+    pub currency: String,
+    pub warnings: Vec<String>,
+    pub items: Vec<CustomerDebitNoteInvoiceMapRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/RevisionExcelParseResult.ts")]
+pub struct RevisionExcelParseResult {
+    pub rows_read: usize,
+    pub valid_count: usize,
+    pub warning_count: usize,
+    pub error_count: usize,
+    pub items: Vec<CustomerPriceRevisionItemRow>,
+    pub validation_errors: Vec<String>,
+}
+
