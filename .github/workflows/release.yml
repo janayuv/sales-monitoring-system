@@ -116,6 +116,6 @@ jobs:
             *.json
           body: |
             ## Release Notes
-            Sales Monitoring System v0.1.0 Release.
+            Sales Monitoring System release version ${{ github.ref_name }}.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN || secrets.GITHUB_TOKEN }}
