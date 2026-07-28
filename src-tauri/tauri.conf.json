@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "Sales Monitoring System",
   "version": "0.1.0",
   "identifier": "com.salesmonitor.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-app",
+        "title": "Sales Monitoring System",
         "width": 800,
         "height": 600
       }
@@ -24,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -31,5 +32,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbnRlbnQ=",
+      "endpoints": [
+        "https://github.com/janayuv/sales-monitoring-system/releases/latest/download/{{target}}"
+      ]
+    }
   }
 }

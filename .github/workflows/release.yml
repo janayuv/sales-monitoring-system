@@ -1,0 +1,114 @@
+name: "Release Pipeline"
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    name: Build, Sign & Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build Tauri Application Bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build
+
+      - name: Parse Signatures & Compile Update Manifest
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          echo "Compiling updater manifest for tag: $TAG_NAME"
+          
+          # 1. Determine release channel based on the tag name
+          CHANNEL="Production"
+          MANIFEST_FILE="latest.json"
+          
+          if [[ "$TAG_NAME" == *"preview"* ]]; then
+            CHANNEL="Preview"
+            MANIFEST_FILE="preview-latest.json"
+          elif [[ "$TAG_NAME" == *"internal"* ]]; then
+            CHANNEL="Internal"
+            MANIFEST_FILE="internal-latest.json"
+          fi
+          
+          echo "Channel resolved: $CHANNEL -> Manifest file: $MANIFEST_FILE"
+          
+          # 2. Extract signature content
+          # Look for signature in the Tauri target directory
+          SIG_FILE=$(find src-tauri/target/release/bundle/msi/ -name "*.msi.zip.sig" | head -n 1)
+          if [ -z "$SIG_FILE" ]; then
+            echo "Error: Signature file (*.msi.zip.sig) not found in build bundle output."
+            exit 1
+          fi
+          SIGNATURE=$(cat "$SIG_FILE")
+          echo "Signature successfully extracted."
+          
+          # Find the updater zip asset file name
+          ZIP_FILE=$(find src-tauri/target/release/bundle/msi/ -name "*.msi.zip" | xargs basename)
+          
+          # 3. Create the latest.json manifest payload
+          # Use raw GitHub Releases tag download URL
+          DOWNLOAD_URL="https://github.com/janayuv/sales-monitoring-system/releases/download/$TAG_NAME/$ZIP_FILE"
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # Strip 'v' prefix if present for version comparison compatibility
+          VERSION="${TAG_NAME#v}"
+          
+          cat <<EOF > "$MANIFEST_FILE"
+          {
+            "version": "$VERSION",
+            "pub_date": "$PUB_DATE",
+            "manifestVersion": 1,
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$SIGNATURE",
+                "url": "$DOWNLOAD_URL"
+              }
+            }
+          }
+          EOF
+          
+          echo "Created update manifest payload:"
+          cat "$MANIFEST_FILE"
+
+      - name: Generate Github Release draft
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, 'preview') || contains(github.ref_name, 'internal') }}
+          files: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.zip
+            latest.json
+            preview-latest.json
+            internal-latest.json
+          body: |
+            ## Release Notes
+            Please write the detailed release logs here.
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}

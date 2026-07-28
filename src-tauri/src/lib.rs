@@ -12,6 +12,7 @@ pub mod state;
 pub mod utils;
 
 use state::DbState;
+// lib.rs
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -26,6 +27,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(commands::maintenance_commands::PendingUpdate(tauri::async_runtime::Mutex::new(None)))
         .manage(DbState::new())
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -55,6 +59,7 @@ pub fn run() {
             commands::export_commands::export_standard_excel,
             commands::export_commands::export_csv,
             commands::export_commands::export_pdf,
+            commands::export_commands::export_credit_notes_einvoice_json,
             commands::export_commands::get_monthly_sales_summary,
             commands::export_commands::get_gst_rate_summary,
             commands::export_commands::get_top_customers,
@@ -77,6 +82,11 @@ pub fn run() {
             commands::maintenance_commands::get_backup_status,
             commands::maintenance_commands::get_app_setting,
             commands::maintenance_commands::set_app_setting,
+            commands::maintenance_commands::get_build_constants,
+            commands::maintenance_commands::get_updater_endpoints,
+            commands::maintenance_commands::get_diagnostics_info,
+            commands::maintenance_commands::check_for_updates_custom,
+            commands::maintenance_commands::install_pending_update_custom,
             // Company Profile
             commands::company_commands::get_company_profile,
             commands::company_commands::save_company_profile,

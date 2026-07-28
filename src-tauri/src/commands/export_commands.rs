@@ -917,3 +917,487 @@ pub fn get_financial_years_list(
 
     Ok(result)
 }
+
+// ======================== E-Invoice JSON Helper & Commands ========================
+
+fn format_state_code(code: &str) -> String {
+    let clean = code.trim();
+    if clean.is_empty() {
+        return "37".to_string(); // default fallback (e.g. AP)
+    }
+    if clean.len() == 1 {
+        format!("0{}", clean)
+    } else {
+        clean.to_string()
+    }
+}
+
+fn format_date_to_einvoice(db_date: &str) -> String {
+    // db_date format: YYYY-MM-DD
+    let parts: Vec<&str> = db_date.split('-').collect();
+    if parts.len() == 3 {
+        format!("{}/{}/{}", parts[2], parts[1], parts[0])
+    } else {
+        db_date.to_string()
+    }
+}
+
+fn parse_address(addr: &str) -> (String, Option<String>, String, u32) {
+    let mut addr1 = addr.trim().to_string();
+    let mut addr2 = None;
+    let mut loc = "Unknown".to_string();
+    let mut pin = 0;
+
+    let chars: Vec<char> = addr.chars().collect();
+    for i in 0..chars.len().saturating_sub(5) {
+        if chars[i..i + 6].iter().all(|c| c.is_ascii_digit()) {
+            if let Ok(p) = chars[i..i + 6].iter().collect::<String>().parse::<u32>() {
+                pin = p;
+                break;
+            }
+        }
+    }
+
+    let parts: Vec<&str> = addr.split(',').map(|s| s.trim()).collect();
+    if parts.len() > 1 {
+        let last_idx = parts.len() - 1;
+        if pin != 0 && parts[last_idx].contains(&pin.to_string()) {
+            if parts.len() > 2 {
+                loc = parts[last_idx - 1].to_string();
+                addr1 = parts[0..last_idx - 1].join(", ");
+                addr2 = Some(parts[last_idx - 1..].join(", "));
+            } else {
+                loc = parts[0].to_string();
+            }
+        } else {
+            loc = parts[last_idx].to_string();
+            addr1 = parts[0..last_idx].join(", ");
+        }
+    }
+
+    if addr1.len() > 100 {
+        let extra = addr1[100..].to_string();
+        addr1.truncate(100);
+        addr2 = Some(match addr2 {
+            Some(a2) => format!("{}, {}", extra, a2),
+            None => extra,
+        });
+    }
+
+    if let Some(ref mut a2) = addr2 {
+        if a2.len() > 100 {
+            a2.truncate(100);
+        }
+    }
+
+    if loc.len() > 50 {
+        loc.truncate(50);
+    }
+    if loc.is_empty() {
+        loc = "Unknown".to_string();
+    }
+
+    (addr1, addr2, loc, pin)
+}
+
+#[tauri::command]
+pub fn export_credit_notes_einvoice_json(
+    state: State<'_, DbState>,
+    date_from: String,
+    date_to: String,
+    output_path: String,
+) -> Result<ExportResult, AppError> {
+    log::info!(
+        "Exporting Credit Notes E-Invoice JSON: {} to {} -> {}",
+        date_from,
+        date_to,
+        output_path
+    );
+
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    // 1. Fetch Seller / Company Profile Details
+    let (
+        comp_name,
+        comp_legal_name,
+        comp_gstin,
+        comp_addr1,
+        comp_addr2,
+        comp_loc,
+        comp_pin,
+        comp_state,
+        comp_phone,
+        comp_email,
+    ) = match conn.query_row(
+        "SELECT company_name, legal_name, gstin, address1, address2, location, pincode, state_code, phone, email
+         FROM company_profile WHERE id = 1",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+            ))
+        },
+    ) {
+        Ok(info) => info,
+        Err(_) => {
+            return Err(AppError::Export {
+                code: "ERR_EINVOICE_001".to_string(),
+                message: "Company profile details (legal name, GSTIN, address) must be configured in settings before exporting E-Invoices.".to_string(),
+            });
+        }
+    };
+
+    let seller_gstin = comp_gstin.ok_or_else(|| AppError::Export {
+        code: "ERR_EINVOICE_002".to_string(),
+        message: "Seller GSTIN is not set in Company Profile".to_string(),
+    })?;
+
+    let seller_lgl_nm = comp_legal_name.or(comp_name).ok_or_else(|| AppError::Export {
+        code: "ERR_EINVOICE_003".to_string(),
+        message: "Seller Legal Name is not set in Company Profile".to_string(),
+    })?;
+
+    let seller_addr1 = comp_addr1.ok_or_else(|| AppError::Export {
+        code: "ERR_EINVOICE_004".to_string(),
+        message: "Seller Address line 1 is not set in Company Profile".to_string(),
+    })?;
+
+    let seller_loc = comp_loc.ok_or_else(|| AppError::Export {
+        code: "ERR_EINVOICE_005".to_string(),
+        message: "Seller Location is not set in Company Profile".to_string(),
+    })?;
+
+    let seller_pin_str = comp_pin.ok_or_else(|| AppError::Export {
+        code: "ERR_EINVOICE_006".to_string(),
+        message: "Seller Pincode is not set in Company Profile".to_string(),
+    })?;
+    let seller_pin = seller_pin_str.trim().parse::<u32>().map_err(|_| AppError::Export {
+        code: "ERR_EINVOICE_006".to_string(),
+        message: format!("Invalid Seller Pincode format: {}", seller_pin_str),
+    })?;
+
+    let seller_stcd_raw = comp_state.ok_or_else(|| AppError::Export {
+        code: "ERR_EINVOICE_007".to_string(),
+        message: "Seller State Code is not set in Company Profile".to_string(),
+    })?;
+    let seller_stcd = format_state_code(&seller_stcd_raw);
+
+    // 2. Fetch Credit Notes
+    let mut cn_stmt = conn.prepare(
+        "SELECT
+            cn.credit_note_number,
+            cn.invoice_number,
+            cn.credit_note_date,
+            cn.total_taxable,
+            cn.total_cgst,
+            cn.total_sgst,
+            cn.total_igst,
+            cn.total_value,
+            cn.remarks,
+            COALESCE(c.legal_name, c.report_name) AS customer_name,
+            c.gstin,
+            c.state_code,
+            c.address1,
+            c.address2,
+            c.location,
+            c.pincode,
+            i.place_of_supply
+         FROM credit_notes cn
+         JOIN customers c ON cn.customer_id = c.id
+         JOIN invoices i ON cn.invoice_number = i.invoice_number
+         WHERE cn.credit_note_date >= ? AND cn.credit_note_date <= ?
+         ORDER BY cn.credit_note_date ASC, cn.credit_note_number ASC"
+    ).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to prepare credit notes export query: {}", e),
+    })?;
+
+    let cn_rows = cn_stmt.query_map(params![date_from, date_to], |row| {
+        Ok((
+            row.get::<_, String>(0)?, // credit_note_number
+            row.get::<_, String>(1)?, // invoice_number
+            row.get::<_, String>(2)?, // credit_note_date
+            row.get::<_, f64>(3)?,    // total_taxable
+            row.get::<_, f64>(4)?,    // total_cgst
+            row.get::<_, f64>(5)?,    // total_sgst
+            row.get::<_, f64>(6)?,    // total_igst
+            row.get::<_, f64>(7)?,    // total_value
+            row.get::<_, Option<String>>(8)?, // remarks
+            row.get::<_, String>(9)?, // customer_name
+            row.get::<_, Option<String>>(10)?, // customer gstin
+            row.get::<_, Option<String>>(11)?, // customer state_code
+            row.get::<_, Option<String>>(12)?, // customer address1
+            row.get::<_, Option<String>>(13)?, // customer address2
+            row.get::<_, Option<String>>(14)?, // customer location
+            row.get::<_, Option<String>>(15)?, // customer pincode
+            row.get::<_, Option<String>>(16)?, // place_of_supply (pos)
+        ))
+    }).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to execute credit notes export query: {}", e),
+    })?;
+
+    let mut docs = Vec::new();
+    let mut count = 0;
+
+    for cn_res in cn_rows {
+        let (
+            cn_number,
+            inv_number,
+            cn_date,
+            total_taxable,
+            total_cgst,
+            total_sgst,
+            total_igst,
+            total_value,
+            remarks,
+            cust_name,
+            cust_gstin_opt,
+            cust_state_opt,
+            cust_address1_opt,
+            cust_address2_opt,
+            cust_location_opt,
+            cust_pincode_opt,
+            pos_opt,
+        ) = cn_res.map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to parse credit note row: {}", e),
+        })?;
+
+        let cust_gstin = cust_gstin_opt.unwrap_or_default();
+        let cust_state_raw = cust_state_opt.unwrap_or_else(|| {
+            if cust_gstin.len() >= 2 {
+                cust_gstin[0..2].to_string()
+            } else {
+                "37".to_string() // fallback state code
+            }
+        });
+        let cust_state = format_state_code(&cust_state_raw);
+        let pos_raw = pos_opt.unwrap_or_else(|| cust_state.clone());
+        let pos = format_state_code(&pos_raw);
+
+        // Resolve structured or legacy buyer address
+        let (buyer_addr1, buyer_addr2, buyer_loc, buyer_pin) = if cust_location_opt.is_some() || cust_pincode_opt.is_some() {
+            let addr1 = cust_address1_opt.unwrap_or_default().trim().to_string();
+            let addr2 = cust_address2_opt.filter(|s| !s.trim().is_empty());
+            let loc = cust_location_opt.unwrap_or_else(|| "Unknown".to_string()).trim().to_string();
+            let pin = cust_pincode_opt.as_deref().unwrap_or("").trim().parse::<u32>().unwrap_or(0);
+            (addr1, addr2, loc, pin)
+        } else {
+            // Fallback for legacy customer: parse single-line address stored in address1
+            parse_address(&cust_address1_opt.unwrap_or_default())
+        };
+
+        // Fetch invoice items
+        let mut item_stmt = conn.prepare(
+            "SELECT
+                ii.part_code,
+                it.part_name,
+                it.hsn_code,
+                it.uom_code,
+                ii.quantity,
+                ii.rate_pre_unit,
+                ii.assessable_value,
+                ii.cgst_rate,
+                ii.cgst_amount,
+                ii.sgst_rate,
+                ii.sgst_amount,
+                ii.igst_rate,
+                ii.igst_amount,
+                ii.total_value
+             FROM invoice_items ii
+             JOIN items it ON ii.part_code = it.part_code
+             WHERE ii.invoice_number = ?"
+        ).map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to prepare invoice items query: {}", e),
+        })?;
+
+        let item_rows = item_stmt.query_map([&inv_number], |row| {
+            Ok((
+                row.get::<_, String>(0)?, // part_code
+                row.get::<_, String>(1)?, // part_name
+                row.get::<_, String>(2)?, // hsn_code
+                row.get::<_, String>(3)?, // uom_code
+                row.get::<_, f64>(4)?,    // quantity
+                row.get::<_, f64>(5)?,    // rate_pre_unit
+                row.get::<_, f64>(6)?,    // assessable_value
+                row.get::<_, f64>(7)?,    // cgst_rate
+                row.get::<_, f64>(8)?,    // cgst_amount
+                row.get::<_, f64>(9)?,    // sgst_rate
+                row.get::<_, f64>(10)?,   // sgst_amount
+                row.get::<_, f64>(11)?,   // igst_rate
+                row.get::<_, f64>(12)?,   // igst_amount
+                row.get::<_, f64>(13)?,   // total_value
+            ))
+        }).map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to execute invoice items query: {}", e),
+        })?;
+
+        let mut item_list = Vec::new();
+        let mut sl_no_counter = 1;
+
+        for item_res in item_rows {
+            let (
+                _part_code,
+                part_name,
+                hsn_code,
+                uom_code,
+                quantity,
+                rate_pre_unit,
+                assessable_value,
+                cgst_rate,
+                cgst_amount,
+                sgst_rate,
+                sgst_amount,
+                igst_rate,
+                igst_amount,
+                tot_val,
+            ) = item_res.map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to parse invoice item row: {}", e),
+            })?;
+
+            let is_servc = if hsn_code.starts_with("99") { "Y" } else { "N" };
+
+            let gst_rt = if igst_rate > 0.0 {
+                igst_rate
+            } else {
+                cgst_rate + sgst_rate
+            };
+
+            let item = crate::models::einvoice_models::EInvoiceItem {
+                sl_no: sl_no_counter.to_string(),
+                prd_desc: part_name,
+                is_servc: is_servc.to_string(),
+                hsn_cd: hsn_code,
+                qty: quantity,
+                free_qty: 0.0,
+                unit: uom_code,
+                unit_price: rate_pre_unit,
+                tot_amt: quantity * rate_pre_unit,
+                discount: 0.0,
+                pre_tax_val: assessable_value,
+                ass_amt: assessable_value,
+                gst_rt,
+                igst_amt: igst_amount,
+                cgst_amt: cgst_amount,
+                sgst_amt: sgst_amount,
+                ces_rt: 0.0,
+                ces_amt: 0.0,
+                ces_non_advl_amt: 0.0,
+                state_ces_rt: 0.0,
+                state_ces_amt: 0.0,
+                state_ces_non_advl_amt: 0.0,
+                oth_chrg: 0.0,
+                tot_item_val: tot_val,
+            };
+
+            item_list.push(item);
+            sl_no_counter += 1;
+        }
+
+        let ref_dtls = remarks.as_ref().map(|r| crate::models::einvoice_models::RefDtls {
+            inv_rm: Some(r.clone()),
+        });
+
+        let doc = crate::models::einvoice_models::EInvoiceDoc {
+            version: "1.1".to_string(),
+            tran_dtls: crate::models::einvoice_models::TranDtls {
+                tax_sch: "GST".to_string(),
+                sup_typ: "B2B".to_string(),
+                igst_on_intra: "N".to_string(),
+                reg_rev: "N".to_string(),
+                ecm_gstin: None,
+            },
+            doc_dtls: crate::models::einvoice_models::DocDtls {
+                typ: "CRN".to_string(),
+                no: cn_number,
+                dt: format_date_to_einvoice(&cn_date),
+            },
+            seller_dtls: crate::models::einvoice_models::SellerDtls {
+                gstin: seller_gstin.clone(),
+                lgl_nm: seller_lgl_nm.clone(),
+                addr1: seller_addr1.clone(),
+                addr2: comp_addr2.clone(),
+                loc: seller_loc.clone(),
+                pin: seller_pin,
+                stcd: seller_stcd.clone(),
+                ph: comp_phone.clone(),
+                em: comp_email.clone(),
+            },
+            buyer_dtls: crate::models::einvoice_models::BuyerDtls {
+                gstin: cust_gstin,
+                lgl_nm: cust_name,
+                addr1: buyer_addr1,
+                addr2: buyer_addr2,
+                loc: buyer_loc,
+                pin: buyer_pin,
+                pos,
+                stcd: cust_state,
+                ph: None,
+                em: None,
+            },
+            val_dtls: crate::models::einvoice_models::ValDtls {
+                ass_val: total_taxable,
+                igst_val: total_igst,
+                cgst_val: total_cgst,
+                sgst_val: total_sgst,
+                ces_val: 0.0,
+                st_ces_val: 0.0,
+                discount: 0.0,
+                oth_chrg: 0.0,
+                rnd_off_amt: 0.0,
+                tot_inv_val: total_value,
+            },
+            ref_dtls,
+            item_list,
+        };
+
+        docs.push(doc);
+        count += 1;
+    }
+
+    if count == 0 {
+        return Err(AppError::Export {
+            code: "ERR_EINVOICE_008".to_string(),
+            message: "No credit note data found for the selected date range".to_string(),
+        });
+    }
+
+    // Write to output path as pretty JSON
+    let json_data = serde_json::to_string_pretty(&docs).map_err(|e| AppError::Export {
+        code: "ERR_EINVOICE_009".to_string(),
+        message: format!("Failed to serialize credit notes JSON: {}", e),
+    })?;
+
+    std::fs::write(&output_path, json_data).map_err(|e| AppError::Export {
+        code: "ERR_EINVOICE_010".to_string(),
+        message: format!("Failed to write export file to {}: {}", output_path, e),
+    })?;
+
+    Ok(ExportResult {
+        format: "E-Invoice JSON (Credit Notes)".to_string(),
+        output_path,
+        row_count: count as u32,
+        message: format!("Successfully exported {} Credit Notes to E-Invoice JSON format", count),
+    })
+}
+

@@ -216,3 +216,175 @@ pub fn set_app_setting(
 
     Ok(())
 }
+
+mod build_info {
+    include!(concat!(env!("OUT_DIR"), "/build_constants.rs"));
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/BuildConstants.ts")]
+pub struct BuildConstants {
+    pub app_version: String,
+    pub build_date: String,
+    pub build_time: String,
+    pub git_hash: String,
+    pub git_branch: String,
+    pub rust_version: String,
+    pub target: String,
+    pub profile: String,
+    pub build_number: String,
+}
+
+#[tauri::command]
+pub fn get_build_constants() -> BuildConstants {
+    BuildConstants {
+        app_version: build_info::APP_VERSION.to_string(),
+        build_date: build_info::BUILD_DATE.to_string(),
+        build_time: build_info::BUILD_TIME.to_string(),
+        git_hash: build_info::GIT_HASH.to_string(),
+        git_branch: build_info::GIT_BRANCH.to_string(),
+        rust_version: build_info::RUST_VERSION.to_string(),
+        target: build_info::TARGET.to_string(),
+        profile: build_info::PROFILE.to_string(),
+        build_number: build_info::BUILD_NUMBER.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn get_updater_endpoints(app: tauri::AppHandle) -> Vec<String> {
+    if let Some(updater) = app.config().plugins.0.get("updater") {
+        if let Some(endpoints) = updater.get("endpoints").and_then(|e| e.as_array()) {
+            return endpoints
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+        }
+    }
+    vec![]
+}
+
+#[derive(Debug, Serialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/DiagnosticsInfo.ts")]
+pub struct DiagnosticsInfo {
+    pub os_version: String,
+    pub webview_version: String,
+    pub tauri_version: String,
+    pub rust_version: String,
+    pub app_data_path: String,
+    pub log_directory: String,
+}
+
+#[tauri::command]
+pub fn get_diagnostics_info(app: tauri::AppHandle) -> DiagnosticsInfo {
+    use tauri::Manager;
+    
+    let os_version = if cfg!(target_os = "windows") {
+        if let Ok(output) = std::process::Command::new("cmd").args(&["/c", "ver"]).output() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            "Windows (Unknown Version)".to_string()
+        }
+    } else {
+        format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)
+    };
+
+    let webview_version = tauri::webview_version()
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    let app_data_path = app.path().app_data_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    let log_directory = app.path().app_log_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    DiagnosticsInfo {
+        os_version,
+        webview_version,
+        tauri_version: tauri::VERSION.to_string(),
+        rust_version: build_info::RUST_VERSION.to_string(),
+        app_data_path,
+        log_directory,
+    }
+}
+
+pub struct PendingUpdate(pub tauri::async_runtime::Mutex<Option<tauri_plugin_updater::Update>>);
+
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomUpdateInfo.ts")]
+pub struct CustomUpdateInfo {
+    pub version: String,
+    pub date: Option<String>,
+    pub body: Option<String>,
+}
+
+#[tauri::command]
+pub async fn check_for_updates_custom(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PendingUpdate>,
+    channel: String,
+) -> Result<Option<CustomUpdateInfo>, AppError> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let base_url = "https://github.com/janayuv/sales-monitoring-system/releases/latest/download";
+    let endpoint = match channel.as_str() {
+        "Preview" => format!("{}/preview-latest.json", base_url),
+        "Internal" => format!("{}/internal-latest.json", base_url),
+        _ => format!("{}/latest.json", base_url),
+    };
+
+    let url = url::Url::parse(&endpoint)
+        .map_err(|e| AppError::Internal(format!("Invalid endpoint URL: {}", e)))?;
+
+    let updater = app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| AppError::Internal(format!("Failed to set endpoints: {}", e)))?
+        .build()
+        .map_err(|e| AppError::Internal(format!("Failed to build updater: {}", e)))?;
+
+    let update = updater.check().await
+        .map_err(|e| AppError::Internal(format!("Failed to check for updates: {}", e)))?;
+
+    if let Some(update) = update {
+        let info = CustomUpdateInfo {
+            version: update.version.clone(),
+            date: update.date.map(|d| format!("{}", d)),
+            body: update.body.clone(),
+        };
+        *state.0.lock().await = Some(update);
+        Ok(Some(info))
+    } else {
+        *state.0.lock().await = None;
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn install_pending_update_custom(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PendingUpdate>,
+) -> Result<(), AppError> {
+    use tauri::Emitter;
+    
+    let mut guard = state.0.lock().await;
+    let update = guard.take().ok_or_else(|| {
+        AppError::Internal("No pending update has been checked or cached.".to_string())
+    })?;
+
+    let app_clone1 = app.clone();
+    let app_clone2 = app.clone();
+    update.download_and_install(
+        move |chunk_length, content_length| {
+            let total = content_length.unwrap_or(0);
+            app_clone1.emit("custom-updater-progress", (chunk_length, total)).ok();
+        },
+        move || {
+            app_clone2.emit("custom-updater-finished", ()).ok();
+        }
+    ).await
+    .map_err(|e| AppError::Internal(format!("Failed to execute update: {}", e)))?;
+
+    Ok(())
+}
+

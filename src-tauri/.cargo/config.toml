@@ -1,4 +1,15 @@
-[target.x86_64-pc-windows-msvc]
-rustflags = [
-    "-L", "C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MT"
-]
+# Intentionally left without a system OpenSSL `-L` search path.
+#
+# Previously this file added:
+#     [target.x86_64-pc-windows-msvc]
+#     rustflags = ["-L", "C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MT"]
+#
+# That pointed the linker at the SYSTEM OpenSSL import library (a stub for
+# libcrypto-3-x64.dll). Because rustflags `-L` paths are searched before the
+# vendored openssl-sys search path, it shadowed the statically-built
+# `libcrypto.lib` and made the final executable depend on libcrypto-3-x64.dll
+# at runtime ("code execution cannot proceed" error on machines without it).
+#
+# We now build OpenSSL statically via the rusqlite
+# `bundled-sqlcipher-vendored-openssl` feature, so no system OpenSSL path is
+# needed and adding one back will re-break portable/static linking.

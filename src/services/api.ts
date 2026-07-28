@@ -407,6 +407,22 @@ export class ApiService {
   }
 
   /**
+   * Export credit notes to E-Invoice JSON format.
+   */
+  static async exportCreditNotesEInvoiceJson(
+    dateFrom: string,
+    dateTo: string,
+    outputPath: string
+  ): Promise<ExportResult> {
+    return await invoke<ExportResult>("export_credit_notes_einvoice_json", {
+      dateFrom,
+      dateTo,
+      outputPath,
+    });
+  }
+
+
+  /**
    * Get monthly sales summary for charts.
    */
   static async getMonthlySalesSummary(

@@ -15,6 +15,7 @@ import {
   Search,
   Eye,
   FileText,
+  FileJson,
   Trash2,
   Calendar,
   Clock,
@@ -25,7 +26,8 @@ import {
   Download,
   BarChart3,
   PieChart,
-  Users
+  Users,
+  Info
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { ImportPreview } from "./types/bindings/ImportPreview";
@@ -43,6 +45,15 @@ import { MonthlySalesRow } from "./types/bindings/MonthlySalesRow";
 import { GstRateSummaryRow } from "./types/bindings/GstRateSummaryRow";
 import { RankingRow } from "./types/bindings/RankingRow";
 import { ExportResult } from "./types/bindings/ExportResult";
+
+import { useUpdaterScheduler } from "./hooks/useUpdater";
+import { UpdateCard } from "./components/updater/UpdateCard";
+import { UpdateDialog } from "./components/updater/UpdateDialog";
+import { AboutDialog } from "./components/updater/AboutDialog";
+
+// App component state
+// ... (omitting other states for readability in snippet, but they follow)
+
 import { DashboardMetrics } from "./types/bindings/DashboardMetrics";
 import { MaintenanceResult } from "./types/bindings/MaintenanceResult";
 import { BackupStatus } from "./types/bindings/BackupStatus";
@@ -51,6 +62,10 @@ import CustomerMasterTab from "./components/CustomerMaster/CustomerMasterTab";
 import CompanyProfileForm from "./components/CompanySettings/CompanyProfileForm";
 
 function App() {
+  // Update scheduler & states
+  useUpdaterScheduler();
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+
   // Navigation & Core States
   const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "revisions" | "notes" | "reports" | "settings">("dashboard");
   const [companyCode, setCompanyCode] = useState("DEMO");
@@ -115,7 +130,7 @@ function App() {
   const [reportSubTab, setReportSubTab] = useState<"export" | "monthly" | "gst" | "customers" | "items">("export");
   const [reportDateFrom, setReportDateFrom] = useState("");
   const [reportDateTo, setReportDateTo] = useState("");
-  const [exportFormat, setExportFormat] = useState<"tally" | "excel" | "csv">("tally");
+  const [exportFormat, setExportFormat] = useState<"tally" | "excel" | "csv" | "einvoice_json">("tally");
   const [isExporting, setIsExporting] = useState(false);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [monthlySales, setMonthlySales] = useState<MonthlySalesRow[]>([]);
@@ -288,11 +303,14 @@ function App() {
       return;
     }
     
-    const ext = exportFormat === "csv" ? "csv" : "xlsx";
-    const filterName = exportFormat === "csv" ? "CSV Files" : "Excel Files";
+    const ext = exportFormat === "einvoice_json" ? "json" : (exportFormat === "csv" ? "csv" : "xlsx");
+    const filterName = exportFormat === "einvoice_json" ? "JSON Files" : (exportFormat === "csv" ? "CSV Files" : "Excel Files");
+    const defaultFilename = exportFormat === "einvoice_json"
+      ? `einvoice_credit_notes_${reportDateFrom}_${reportDateTo}.json`
+      : `sales_export_${reportDateFrom}_${reportDateTo}.${ext}`;
     
     const savePath = await save({
-      defaultPath: `sales_export_${reportDateFrom}_${reportDateTo}.${ext}`,
+      defaultPath: defaultFilename,
       filters: [{ name: filterName, extensions: [ext] }],
     });
     
@@ -306,8 +324,10 @@ function App() {
         result = await ApiService.exportTallyExcel(reportDateFrom, reportDateTo, savePath);
       } else if (exportFormat === "excel") {
         result = await ApiService.exportStandardExcel(reportDateFrom, reportDateTo, savePath);
-      } else {
+      } else if (exportFormat === "csv") {
         result = await ApiService.exportCsv(reportDateFrom, reportDateTo, savePath);
+      } else {
+        result = await ApiService.exportCreditNotesEInvoiceJson(reportDateFrom, reportDateTo, savePath);
       }
       setExportResult(result);
     } catch (err: any) {
@@ -806,6 +826,13 @@ function App() {
             >
               <Settings className="w-4 h-4" />
               Company Settings
+            </button>
+            <button
+              onClick={() => setIsAboutOpen(true)}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm text-slate-400 hover:bg-slate-800/50 hover:text-slate-100 transition-all duration-200"
+            >
+              <Info className="w-4 h-4 text-indigo-400" />
+              About Application
             </button>
           </nav>
         </div>
@@ -1644,7 +1671,7 @@ function App() {
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 gap-4">
                       <div
                         onClick={() => setExportFormat("tally")}
                         className={`cursor-pointer p-4 rounded-xl border transition-all ${
@@ -1687,6 +1714,21 @@ function App() {
                         <h4 className="font-bold text-xs text-slate-200">CSV Raw Stream</h4>
                         <p className="text-[10px] text-slate-400 mt-1">
                           Ultra-fast plaintext CSV output for downstream data processing, Python pipelines, or custom ERP integration.
+                        </p>
+                      </div>
+
+                      <div
+                        onClick={() => setExportFormat("einvoice_json")}
+                        className={`cursor-pointer p-4 rounded-xl border transition-all ${
+                          exportFormat === "einvoice_json"
+                            ? "bg-indigo-600/10 border-indigo-500 text-indigo-300"
+                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <FileJson className="w-6 h-6 mb-2 text-amber-400" />
+                        <h4 className="font-bold text-xs text-slate-200">E-Invoice JSON (Credit Notes)</h4>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Generates hierarchical JSON upload files matching the GST portal standard v1.1 schema specifically for Credit Notes.
                         </p>
                       </div>
                     </div>
@@ -2141,6 +2183,9 @@ function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Updater configuration setting card */}
+              <UpdateCard />
             </div>
           )}
         </div>
@@ -2441,6 +2486,10 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* Global Updater Prompts & About Popovers */}
+      <UpdateDialog />
+      <AboutDialog isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
     </div>
   );
 }
