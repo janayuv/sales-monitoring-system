@@ -61,7 +61,6 @@ jobs:
           echo "Channel resolved: $CHANNEL -> Manifest file: $MANIFEST_FILE"
           
           # 2. Extract signature content
-          # Look for signature in the Tauri target directory
           SIG_FILE=$(find src-tauri/target/release/bundle/ -name "*.sig" | head -n 1)
           if [ -z "$SIG_FILE" ]; then
             echo "Error: Signature file (*.sig) not found in build bundle output."
@@ -70,18 +69,18 @@ jobs:
           SIGNATURE=$(cat "$SIG_FILE")
           echo "Signature successfully extracted from $SIG_FILE"
           
-          # Find the updater zip asset file name
-          ZIP_PATH=$(find src-tauri/target/release/bundle/ -name "*.zip" | head -n 1)
-          if [ -z "$ZIP_PATH" ]; then
-            echo "Error: Updater zip file (*.zip) not found in build bundle output."
+          # 3. Resolve the signed payload file
+          PAYLOAD_FILE="${SIG_FILE%.sig}"
+          if [ ! -f "$PAYLOAD_FILE" ]; then
+            echo "Error: Signed payload file ($PAYLOAD_FILE) does not exist."
             exit 1
           fi
-          ZIP_FILE=$(basename "$ZIP_PATH")
-          echo "Updater zip resolved: $ZIP_FILE"
+          PAYLOAD_NAME=$(basename "$PAYLOAD_FILE")
+          ENCODED_NAME=$(echo "$PAYLOAD_NAME" | sed 's/ /%20/g')
+          echo "Signed payload resolved: $PAYLOAD_NAME -> Encoded: $ENCODED_NAME"
           
-          # 3. Create the latest.json manifest payload
-          # Use raw GitHub Releases tag download URL
-          DOWNLOAD_URL="https://github.com/janayuv/sales-monitoring-system/releases/download/$TAG_NAME/$ZIP_FILE"
+          # 4. Create the manifest payload
+          DOWNLOAD_URL="https://github.com/janayuv/sales-monitoring-system/releases/download/$TAG_NAME/$ENCODED_NAME"
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
           # Strip 'v' prefix if present for version comparison compatibility
