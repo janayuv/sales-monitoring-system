@@ -66,6 +66,16 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
   const handleColSpanChange = (id: string, newSpan: 1 | 2 | 3) => {
     const updated = layout.map((item) => (item.id === id ? { ...item, colSpan: newSpan } : item));
     saveLayout(updated);
+  };  const handleMoveCard = (id: string, direction: "prev" | "next") => {
+    const idx = layout.findIndex((item) => item.id === id);
+    if (idx === -1) return;
+    const targetIdx = direction === "prev" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= layout.length) return;
+
+    const newLayout = [...layout];
+    const [movedItem] = newLayout.splice(idx, 1);
+    newLayout.splice(targetIdx, 0, movedItem);
+    saveLayout(newLayout);
   };
 
   const handleDragStart = (id: string) => {
@@ -74,6 +84,10 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
 
   const handleDragOver = (_e: React.DragEvent, _targetId: string) => {
     // Handled visually in DraggableCard
+  };
+
+  const handleDragEnd = () => {
+    setDraggedId(null);
   };
 
   const handleDrop = (targetId: string) => {
@@ -96,6 +110,10 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
 
   // Render individual card by ID
   const renderCard = (item: CardLayoutConfig) => {
+    const idx = layout.findIndex((l) => l.id === item.id);
+    const canMovePrev = idx > 0;
+    const canMoveNext = idx < layout.length - 1;
+
     switch (item.id) {
       case "kpi_metrics":
         return (
@@ -108,6 +126,12 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onMove={handleMoveCard}
+            canMovePrev={canMovePrev}
+            canMoveNext={canMoveNext}
+            positionIndex={idx}
+            totalCards={layout.length}
             isDragging={draggedId === item.id}
           >
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -172,6 +196,12 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onMove={handleMoveCard}
+            canMovePrev={canMovePrev}
+            canMoveNext={canMoveNext}
+            positionIndex={idx}
+            totalCards={layout.length}
             isDragging={draggedId === item.id}
           >
             <div className="space-y-3 text-xs flex-1 justify-between flex flex-col">
@@ -212,6 +242,12 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onMove={handleMoveCard}
+            canMovePrev={canMovePrev}
+            canMoveNext={canMoveNext}
+            positionIndex={idx}
+            totalCards={layout.length}
             isDragging={draggedId === item.id}
           >
             {!metrics || metrics.recent_activity.length === 0 ? (
@@ -239,6 +275,12 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onMove={handleMoveCard}
+            canMovePrev={canMovePrev}
+            canMoveNext={canMoveNext}
+            positionIndex={idx}
+            totalCards={layout.length}
             isDragging={draggedId === item.id}
           >
             {(!metrics || metrics.top_10_customers.length === 0) ? (
@@ -267,6 +309,12 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onMove={handleMoveCard}
+            canMovePrev={canMovePrev}
+            canMoveNext={canMoveNext}
+            positionIndex={idx}
+            totalCards={layout.length}
             isDragging={draggedId === item.id}
           >
             {(!metrics || metrics.top_10_suppliers.length === 0) ? (
@@ -295,6 +343,12 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            onMove={handleMoveCard}
+            canMovePrev={canMovePrev}
+            canMoveNext={canMoveNext}
+            positionIndex={idx}
+            totalCards={layout.length}
             isDragging={draggedId === item.id}
           >
             {(!metrics || metrics.top_20_parts.length === 0) ? (
@@ -325,7 +379,7 @@ export default function DashboardKpis({ metrics }: DashboardKpisProps) {
           <LayoutGrid className="w-4 h-4 text-[var(--ember-primary)]" />
           <span className="font-semibold text-[var(--ember-text-primary)]">Customizable Dashboard Grid</span>
           <span className="text-[10px] text-[var(--ember-text-muted)] italic">
-            (Drag handle to reorder blocks • Click 1x/2x/Full to resize)
+            (Drag handle or use ◄ ► buttons to reorder blocks • Click 1x/2x/Full to resize)
           </span>
         </div>
 

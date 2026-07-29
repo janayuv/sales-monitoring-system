@@ -204,8 +204,24 @@ function App() {
     saveSettingsLayout(updated);
   };
 
+  const handleMoveSettingsCard = (id: string, direction: "prev" | "next") => {
+    const idx = settingsLayout.findIndex((item) => item.id === id);
+    if (idx === -1) return;
+    const targetIdx = direction === "prev" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= settingsLayout.length) return;
+
+    const newLayout = [...settingsLayout];
+    const [movedItem] = newLayout.splice(idx, 1);
+    newLayout.splice(targetIdx, 0, movedItem);
+    saveSettingsLayout(newLayout);
+  };
+
   const handleSettingsDragStart = (id: string) => {
     setDraggedSettingsId(id);
+  };
+
+  const handleSettingsDragEnd = () => {
+    setDraggedSettingsId(null);
   };
 
   const handleSettingsDrop = (targetId: string) => {
@@ -2266,6 +2282,10 @@ function App() {
               {/* Dynamic Settings Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {settingsLayout.map((item) => {
+                  const idx = settingsLayout.findIndex((l) => l.id === item.id);
+                  const canMovePrev = idx > 0;
+                  const canMoveNext = idx < settingsLayout.length - 1;
+
                   switch (item.id) {
                     case "company_profile":
                       return (
@@ -2278,6 +2298,12 @@ function App() {
                           onDragStart={handleSettingsDragStart}
                           onDragOver={(_e, _id) => {}}
                           onDrop={handleSettingsDrop}
+                          onDragEnd={handleSettingsDragEnd}
+                          onMove={handleMoveSettingsCard}
+                          canMovePrev={canMovePrev}
+                          canMoveNext={canMoveNext}
+                          positionIndex={idx}
+                          totalCards={settingsLayout.length}
                           isDragging={draggedSettingsId === item.id}
                         >
                           <CompanyProfileForm />
@@ -2295,6 +2321,12 @@ function App() {
                           onDragStart={handleSettingsDragStart}
                           onDragOver={(_e, _id) => {}}
                           onDrop={handleSettingsDrop}
+                          onDragEnd={handleSettingsDragEnd}
+                          onMove={handleMoveSettingsCard}
+                          canMovePrev={canMovePrev}
+                          canMoveNext={canMoveNext}
+                          positionIndex={idx}
+                          totalCards={settingsLayout.length}
                           isDragging={draggedSettingsId === item.id}
                         >
                           <div className="space-y-4 flex flex-col justify-between flex-1">
@@ -2361,6 +2393,12 @@ function App() {
                           onDragStart={handleSettingsDragStart}
                           onDragOver={(_e, _id) => {}}
                           onDrop={handleSettingsDrop}
+                          onDragEnd={handleSettingsDragEnd}
+                          onMove={handleMoveSettingsCard}
+                          canMovePrev={canMovePrev}
+                          canMoveNext={canMoveNext}
+                          positionIndex={idx}
+                          totalCards={settingsLayout.length}
                           isDragging={draggedSettingsId === item.id}
                         >
                           <div className="space-y-4 flex flex-col justify-between flex-1">
@@ -2401,6 +2439,12 @@ function App() {
                           onDragStart={handleSettingsDragStart}
                           onDragOver={(_e, _id) => {}}
                           onDrop={handleSettingsDrop}
+                          onDragEnd={handleSettingsDragEnd}
+                          onMove={handleMoveSettingsCard}
+                          canMovePrev={canMovePrev}
+                          canMoveNext={canMoveNext}
+                          positionIndex={idx}
+                          totalCards={settingsLayout.length}
                           isDragging={draggedSettingsId === item.id}
                         >
                           <div className="space-y-4 flex flex-col justify-between flex-1">
@@ -2458,6 +2502,12 @@ function App() {
                           onDragStart={handleSettingsDragStart}
                           onDragOver={(_e, _id) => {}}
                           onDrop={handleSettingsDrop}
+                          onDragEnd={handleSettingsDragEnd}
+                          onMove={handleMoveSettingsCard}
+                          canMovePrev={canMovePrev}
+                          canMoveNext={canMoveNext}
+                          positionIndex={idx}
+                          totalCards={settingsLayout.length}
                           isDragging={draggedSettingsId === item.id}
                         >
                           <div className="space-y-4 flex flex-col justify-between flex-1">
@@ -2505,6 +2555,12 @@ function App() {
                           onDragStart={handleSettingsDragStart}
                           onDragOver={(_e, _id) => {}}
                           onDrop={handleSettingsDrop}
+                          onDragEnd={handleSettingsDragEnd}
+                          onMove={handleMoveSettingsCard}
+                          canMovePrev={canMovePrev}
+                          canMoveNext={canMoveNext}
+                          positionIndex={idx}
+                          totalCards={settingsLayout.length}
                           isDragging={draggedSettingsId === item.id}
                         >
                           <UpdateCard />
