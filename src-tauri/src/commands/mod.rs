@@ -8,4 +8,5 @@ pub mod maintenance_commands;
 pub mod profile_commands;
 pub mod revision_commands;
 pub mod customer_revision_commands;
+pub mod credit_note_commands;
 

@@ -9,8 +9,7 @@ pub struct EInvoiceDoc {
     pub seller_dtls: SellerDtls,
     pub buyer_dtls: BuyerDtls,
     pub val_dtls: ValDtls,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ref_dtls: Option<RefDtls>,
+    pub ref_dtls: RefDtls,
     pub item_list: Vec<EInvoiceItem>,
 }
 

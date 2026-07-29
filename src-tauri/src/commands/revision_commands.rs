@@ -1,7 +1,8 @@
 use crate::error::AppError;
 use crate::models::database_models::{
-    CreditNoteRow, DebitNoteItemRow, DebitNoteRow, SupplierPriceRevisionRow,
+    DebitNoteItemRow, DebitNoteRow, SupplierPriceRevisionRow,
 };
+use crate::services::credit_note_service::CreditNoteService;
 use crate::repositories::report_repo::SqliteReportRepository;
 use crate::repositories::ReportRepository;
 use crate::state::DbState;
@@ -552,73 +553,32 @@ pub fn auto_generate_credit_note(
         message: format!("Failed to start transaction: {}", e),
     })?;
 
-    // Find invoice details
-    let (customer_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status, financial_year_id) = tx.query_row(
-        "SELECT customer_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status, financial_year_id
-         FROM invoices WHERE invoice_number = ?",
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    let cn_number = CreditNoteService::generate_credit_note(
+        &tx,
+        &invoice_number,
+        &today,
+        remarks,
+        Some("Auto-generated for Cancelled invoice".to_string()),
+        "System",
+    )?;
+
+    // Fetch financial year for events
+    let fy_id: i64 = tx.query_row(
+        "SELECT financial_year_id FROM invoices WHERE invoice_number = ?",
         [&invoice_number],
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, f64>(1)?,
-                row.get::<_, f64>(2)?,
-                row.get::<_, f64>(3)?,
-                row.get::<_, f64>(4)?,
-                row.get::<_, f64>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, i64>(7)?,
-            ))
-        },
-    )
-    .map_err(|e| AppError::Db {
+        |row| row.get(0),
+    ).map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
         message: format!("Invoice not found: {}", e),
     })?;
 
-    if status != "Cancelled" {
-        return Err(AppError::Validation {
-            code: "ERR_NOTE_002".to_string(),
-            message: "Credit notes can only be auto-generated for Cancelled invoices".to_string(),
-        });
-    }
-
-    let credit_note_number = format!("CN-{}", invoice_number);
-
-    // Insert Credit Note
-    tx.execute(
-        "INSERT INTO credit_notes (credit_note_number, invoice_number, customer_id, credit_note_date, total_taxable, total_cgst, total_sgst, total_igst, total_value, status, remarks)
-         VALUES (?, ?, ?, date('now'), ?, ?, ?, ?, ?, 'Draft', ?)",
-        params![
-            credit_note_number,
-            invoice_number,
-            customer_id,
-            total_taxable,
-            total_cgst,
-            total_sgst,
-            total_igst,
-            total_value,
-            remarks
-        ],
-    )
-    .map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to create credit note record: {}", e),
-    })?;
-
-    // Update invoice status
-    tx.execute(
-        "UPDATE invoices SET status = 'Credit Note Generated' WHERE invoice_number = ?",
-        [&invoice_number],
-    )
-    .map_err(|e| AppError::Db {
-        code: "ERR_DB_003".to_string(),
-        message: format!("Failed to update invoice status flag: {}", e),
-    })?;
-
+    // Refresh reporting summaries
     let report_repo = SqliteReportRepository;
-    report_repo.refresh_monthly_summary(&tx, financial_year_id)?;
-    report_repo.refresh_customer_summary(&tx, financial_year_id)?;
-    report_repo.refresh_supplier_summary(&tx, financial_year_id)?;
+    report_repo.refresh_monthly_summary(&tx, fy_id)?;
+    report_repo.refresh_customer_summary(&tx, fy_id)?;
+    report_repo.refresh_supplier_summary(&tx, fy_id)?;
 
     tx.commit().map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
@@ -629,60 +589,5 @@ pub fn auto_generate_credit_note(
         *cache = None;
     }
 
-    Ok(credit_note_number)
-}
-
-#[tauri::command]
-pub fn list_credit_notes(state: State<'_, DbState>) -> Result<Vec<CreditNoteRow>, AppError> {
-    let conn_guard = state
-        .conn
-        .lock()
-        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
-    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
-        code: "ERR_DB_002".to_string(),
-        message: "No active database connection profile".to_string(),
-    })?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT credit_note_number, invoice_number, customer_id, credit_note_date, total_taxable, total_cgst, total_sgst, total_igst, total_value, status, remarks, approved_at, created_at 
-             FROM credit_notes 
-             ORDER BY created_at DESC",
-        )
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to prepare credit notes query: {}", e),
-        })?;
-
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(CreditNoteRow {
-                credit_note_number: row.get(0)?,
-                invoice_number: row.get(1)?,
-                customer_id: row.get(2)?,
-                credit_note_date: row.get(3)?,
-                total_taxable: row.get(4)?,
-                total_cgst: row.get(5)?,
-                total_sgst: row.get(6)?,
-                total_igst: row.get(7)?,
-                total_value: row.get(8)?,
-                status: row.get(9)?,
-                remarks: row.get(10)?,
-                approved_at: row.get(11)?,
-                created_at: row.get(12)?,
-            })
-        })
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to execute credit notes query: {}", e),
-        })?;
-
-    let mut list = Vec::new();
-    for r in rows {
-        list.push(r.map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to parse credit note row: {}", e),
-        })?);
-    }
-    Ok(list)
+    Ok(cn_number)
 }

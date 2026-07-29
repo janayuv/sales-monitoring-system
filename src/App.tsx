@@ -29,7 +29,9 @@ import {
   Users,
   Info,
   RotateCcw,
-  LayoutGrid
+  LayoutGrid,
+  Edit2,
+  Printer
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
@@ -43,7 +45,11 @@ import { AuditLogRow } from "./types/bindings/AuditLogRow";
 import { SupplierPriceRevisionRow } from "./types/bindings/SupplierPriceRevisionRow";
 import { DebitNoteRow } from "./types/bindings/DebitNoteRow";
 import { DebitNoteItemRow } from "./types/bindings/DebitNoteItemRow";
-import { CreditNoteRow } from "./types/bindings/CreditNoteRow";
+import { CreditNoteHeader } from "./types/bindings/CreditNoteHeader";
+import { CreditNoteDetails } from "./types/bindings/CreditNoteDetails";
+import { CreditNotePrintView } from "./components/CustomerCreditNotes/CreditNotePrintView";
+import { CreditNoteEditModal } from "./components/CustomerCreditNotes/CreditNoteEditModal";
+import { CreditNoteDeleteConfirmModal } from "./components/CustomerCreditNotes/CreditNoteDeleteConfirmModal";
 import { SupplierRow } from "./types/bindings/SupplierRow";
 import { MonthlySalesRow } from "./types/bindings/MonthlySalesRow";
 import { GstRateSummaryRow } from "./types/bindings/GstRateSummaryRow";
@@ -130,8 +136,15 @@ function App() {
   // Adjustment Notes States
   const [activeNotesSubTab, setActiveNotesSubTab] = useState<"debit" | "credit">("debit");
   const [debitNotes, setDebitNotes] = useState<DebitNoteRow[]>([]);
-  const [creditNotes, setCreditNotes] = useState<CreditNoteRow[]>([]);
+  const [creditNotes, setCreditNotes] = useState<CreditNoteHeader[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
+  const [selectedCreditNoteNo, setSelectedCreditNoteNo] = useState<string | null>(null);
+  const [showEditCreditNoteModal, setShowEditCreditNoteModal] = useState(false);
+  const [showDeleteCreditNoteModal, setShowDeleteCreditNoteModal] = useState(false);
+  const [showPrintCreditNoteModal, setShowPrintCreditNoteModal] = useState(false);
+  const [showViewCreditNoteModal, setShowViewCreditNoteModal] = useState(false);
+  const [currentCreditNoteDetails, setCurrentCreditNoteDetails] = useState<CreditNoteDetails | null>(null);
+  const [includeDeletedCreditNotes, setIncludeDeletedCreditNotes] = useState(false);
 
   // Reports & Export States
   const [reportSubTab, setReportSubTab] = useState<"export" | "monthly" | "gst" | "customers" | "items">("export");
@@ -317,7 +330,7 @@ function App() {
     setLoadingNotes(true);
     try {
       const dNotes = await ApiService.listDebitNotes();
-      const cNotes = await ApiService.listCreditNotes();
+      const cNotes = await ApiService.listCreditNotes(includeDeletedCreditNotes);
       setDebitNotes(dNotes);
       setCreditNotes(cNotes);
     } catch (err) {
@@ -326,6 +339,12 @@ function App() {
       setLoadingNotes(false);
     }
   };
+
+  useEffect(() => {
+    if (isConnected && activeTab === "notes") {
+      loadNotes();
+    }
+  }, [includeDeletedCreditNotes]);
 
   // Dashboard Metrics
   const loadDashboardMetrics = async () => {
@@ -592,6 +611,89 @@ function App() {
       loadInvoices();
     } catch (err: any) {
       alert(`Error generating credit note: ${err.message || err}`);
+    }
+  };
+
+  const handleViewCreditNote = async (cnNo: string) => {
+    try {
+      const res = await ApiService.getCreditNoteDetails(cnNo);
+      if (res) {
+        setCurrentCreditNoteDetails(res);
+        setSelectedCreditNoteNo(cnNo);
+        setShowViewCreditNoteModal(true);
+      }
+    } catch (e: any) {
+      alert(e.message || "Failed to load credit note details");
+    }
+  };
+
+  const handleEditCreditNote = (cnNo: string) => {
+    setSelectedCreditNoteNo(cnNo);
+    setShowEditCreditNoteModal(true);
+  };
+
+  const handlePrintCreditNote = async (cnNo: string) => {
+    try {
+      const res = await ApiService.getCreditNoteDetails(cnNo);
+      if (res) {
+        setCurrentCreditNoteDetails(res);
+        setSelectedCreditNoteNo(cnNo);
+        setShowPrintCreditNoteModal(true);
+      }
+    } catch (e: any) {
+      alert(e.message || "Failed to load print preview");
+    }
+  };
+
+  const handleDeleteCreditNote = (cnNo: string) => {
+    setSelectedCreditNoteNo(cnNo);
+    setShowDeleteCreditNoteModal(true);
+  };
+
+  const handleRestoreCreditNote = async (cnNo: string) => {
+    if (confirm(`Are you sure you want to restore Credit Note ${cnNo}?`)) {
+      try {
+        await ApiService.restoreCreditNoteRecord(cnNo, "System User");
+        await loadNotes();
+      } catch (e: any) {
+        alert(e.message || "Failed to restore Credit Note");
+      }
+    }
+  };
+
+  const handleSubmitCreditNote = async (cnNo: string) => {
+    try {
+      await ApiService.submitCreditNoteForReview(cnNo, "System User");
+      await loadNotes();
+    } catch (e: any) {
+      alert(e.message || "Failed to submit for review");
+    }
+  };
+
+  const handleApproveCreditNote = async (cnNo: string) => {
+    try {
+      await ApiService.approveCreditNoteRecord(cnNo, "System User");
+      await loadNotes();
+    } catch (e: any) {
+      alert(e.message || "Failed to approve credit note");
+    }
+  };
+
+  const handleRejectCreditNote = async (cnNo: string) => {
+    try {
+      await ApiService.rejectCreditNoteToDraft(cnNo, "System User");
+      await loadNotes();
+    } catch (e: any) {
+      alert(e.message || "Failed to return to draft");
+    }
+  };
+
+  const handleExportCreditNoteRecord = async (cnNo: string) => {
+    try {
+      await ApiService.exportCreditNoteRecord(cnNo, "System User");
+      await loadNotes();
+    } catch (e: any) {
+      alert(e.message || "Failed to export credit note");
     }
   };
 
@@ -1234,12 +1336,23 @@ function App() {
                 </div>
 
                 {activeNotesSubTab === "credit" ? (
-                  <button
-                    onClick={handleExportCreditNotes}
-                    className="ember-btn-secondary px-4 py-2 text-xs flex items-center gap-1.5"
-                  >
-                    <Download className="w-3.5 h-3.5 text-[var(--ember-primary)]" /> Export Credit Notes CSV
-                  </button>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-1.5 text-xs text-[var(--ember-text-secondary)] font-semibold select-none cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeDeletedCreditNotes}
+                        onChange={(e) => setIncludeDeletedCreditNotes(e.target.checked)}
+                        className="rounded border-[var(--ember-border)] text-[var(--ember-primary)] focus:ring-[var(--ember-primary)]"
+                      />
+                      Include Soft-Deleted
+                    </label>
+                    <button
+                      onClick={handleExportCreditNotes}
+                      className="ember-btn-secondary px-4 py-2 text-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-[var(--ember-primary)]" /> Export Credit Notes CSV
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={handleExportDebitNotes}
@@ -1314,31 +1427,151 @@ function App() {
                         <th className="p-4 text-right">Taxable Value</th>
                         <th className="p-4 text-right">Total Refund</th>
                         <th className="p-4 text-center">Status</th>
+                        <th className="p-4 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--ember-border-subtle)]">
                       {loadingNotes ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-[var(--ember-text-muted)]">Loading notes...</td>
+                          <td colSpan={7} className="p-8 text-center text-[var(--ember-text-muted)]">Loading notes...</td>
                         </tr>
                       ) : creditNotes.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-[var(--ember-text-muted)]">No credit notes found.</td>
+                          <td colSpan={7} className="p-8 text-center text-[var(--ember-text-muted)]">No credit notes found.</td>
                         </tr>
                       ) : (
                         creditNotes.map((cn) => (
-                          <tr key={cn.credit_note_number} className="hover:bg-[var(--ember-surface-raised)] transition-colors">
-                            <td className="p-4 font-mono font-bold text-[var(--ember-primary)]">{cn.credit_note_number}</td>
+                          <tr key={cn.credit_note_number} className={`hover:bg-[var(--ember-surface-raised)] transition-colors ${cn.is_deleted ? "opacity-60 bg-red-500/[0.03]" : ""}`}>
+                            <td className="p-4 font-mono font-bold text-[var(--ember-primary)] flex items-center gap-1.5">
+                              {cn.credit_note_number}
+                              {cn.is_deleted && <span className="text-[10px] text-red-500 font-sans font-bold uppercase tracking-wider">(Deleted)</span>}
+                            </td>
                             <td className="p-4 font-mono text-[var(--ember-text-muted)]">{cn.invoice_number}</td>
                             <td className="p-4 font-mono text-[var(--ember-text-secondary)]">{cn.credit_note_date}</td>
                             <td className="p-4 text-right font-mono text-[var(--ember-text-primary)]">₹{cn.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                             <td className="p-4 text-right font-mono font-bold text-rose-600 dark:text-rose-400">₹{cn.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                             <td className="p-4 text-center">
-                              <span className={`px-2.5 py-1 ember-chip ${
-                                cn.status === "Approved" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30" : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
-                              }`}>
-                                {cn.status}
-                              </span>
+                              {cn.is_deleted ? (
+                                <span className="px-2.5 py-1 ember-chip bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30 font-bold uppercase tracking-wider">
+                                  🔴 Deleted
+                                </span>
+                              ) : cn.status === "Draft" ? (
+                                <span className="px-2.5 py-1 ember-chip bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 font-bold uppercase tracking-wider">
+                                  🟡 Draft
+                                </span>
+                              ) : cn.status === "Review" ? (
+                                <span className="px-2.5 py-1 ember-chip bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30 font-bold uppercase tracking-wider">
+                                  🔵 Review
+                                </span>
+                              ) : cn.status === "Approved" ? (
+                                <span className="px-2.5 py-1 ember-chip bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 font-bold uppercase tracking-wider">
+                                  🟢 Approved
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-1 ember-chip bg-slate-500/15 text-slate-700 dark:text-slate-300 border border-slate-500/30 font-bold uppercase tracking-wider">
+                                  ⚫ Exported
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-4 text-center flex items-center justify-center gap-2.5">
+                              {/* 👁 View details */}
+                              <button
+                                onClick={() => handleViewCreditNote(cn.credit_note_number)}
+                                title="View Details"
+                                className="p-1 hover:text-[var(--ember-primary)] text-slate-400 cursor-pointer transition-colors"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+
+                              {/* ✏ Edit */}
+                              <button
+                                onClick={() => handleEditCreditNote(cn.credit_note_number)}
+                                disabled={cn.is_deleted || cn.status !== "Draft"}
+                                title={cn.is_deleted ? "Deleted note cannot be edited" : cn.status !== "Draft" ? "Only Draft notes can be edited" : "Edit Credit Note"}
+                                className={`p-1 transition-colors ${
+                                  cn.is_deleted || cn.status !== "Draft"
+                                    ? "text-slate-700 dark:text-slate-800 cursor-not-allowed opacity-40"
+                                    : "hover:text-[var(--ember-primary)] text-slate-400 cursor-pointer"
+                                }`}
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* 🖨 Print */}
+                              <button
+                                onClick={() => handlePrintCreditNote(cn.credit_note_number)}
+                                disabled={cn.is_deleted}
+                                title={cn.is_deleted ? "Deleted note cannot be printed" : "Print Preview"}
+                                className={`p-1 transition-colors ${
+                                  cn.is_deleted
+                                    ? "text-slate-700 dark:text-slate-800 cursor-not-allowed opacity-40"
+                                    : "hover:text-[var(--ember-primary)] text-slate-400 cursor-pointer"
+                                }`}
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* 🗑 Delete / 🔄 Restore */}
+                              {cn.is_deleted ? (
+                                <button
+                                  onClick={() => handleRestoreCreditNote(cn.credit_note_number)}
+                                  title="Restore Credit Note"
+                                  className="p-1 hover:text-emerald-500 text-slate-400 cursor-pointer transition-colors animate-pulse"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleDeleteCreditNote(cn.credit_note_number)}
+                                  disabled={cn.status === "Approved" || cn.status === "Exported"}
+                                  title={cn.status === "Approved" || cn.status === "Exported" ? "Approved/Exported note cannot be deleted" : "Delete Credit Note"}
+                                  className={`p-1 transition-colors ${
+                                    cn.status === "Approved" || cn.status === "Exported"
+                                      ? "text-slate-700 dark:text-slate-800 cursor-not-allowed opacity-40"
+                                      : "hover:text-red-500 text-slate-400 cursor-pointer"
+                                  }`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              {/* Quick Transition Actions */}
+                              {!cn.is_deleted && (
+                                <div className="border-l border-slate-700 pl-2.5 ml-1">
+                                  {cn.status === "Draft" && (
+                                    <button
+                                      onClick={() => handleSubmitCreditNote(cn.credit_note_number)}
+                                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold cursor-pointer transition-all active:scale-[0.96]"
+                                    >
+                                      Submit
+                                    </button>
+                                  )}
+                                  {cn.status === "Review" && (
+                                    <div className="flex gap-1">
+                                      <button
+                                        onClick={() => handleApproveCreditNote(cn.credit_note_number)}
+                                        className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[9px] font-bold cursor-pointer transition-all"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        onClick={() => handleRejectCreditNote(cn.credit_note_number)}
+                                        className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[9px] font-bold cursor-pointer transition-all"
+                                      >
+                                        Reject
+                                      </button>
+                                    </div>
+                                  )}
+                                  {cn.status === "Approved" && (
+                                    <button
+                                      onClick={() => handleExportCreditNoteRecord(cn.credit_note_number)}
+                                      className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-[10px] font-bold cursor-pointer transition-all"
+                                    >
+                                      Export
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </td>
                           </tr>
                         ))
@@ -2587,6 +2820,199 @@ function App() {
       {/* Global Updater Prompts & About Popovers */}
       <UpdateDialog />
       <AboutDialog isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
+
+      {/* Credit Note Lifecycle Modals & Print Overlays */}
+      {showViewCreditNoteModal && currentCreditNoteDetails && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm overflow-y-auto p-4 flex justify-center items-start pt-10 font-sans text-xs text-slate-100 print:hidden">
+          <div className="bg-slate-900 border border-slate-800 text-slate-100 w-full max-w-4xl rounded-xl shadow-2xl overflow-hidden flex flex-col my-4">
+            <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/40">
+              <div>
+                <h2 className="text-lg font-bold text-white">👁️ Credit Note Details: {selectedCreditNoteNo}</h2>
+                <p className="text-xs text-slate-400 mt-1">Audit Trail & Capabilities</p>
+              </div>
+              <button onClick={() => setShowViewCreditNoteModal(false)} className="text-slate-400 hover:text-white transition-colors text-lg cursor-pointer">✕</button>
+            </div>
+            
+            <div className="p-6 space-y-6 flex-1 overflow-y-auto max-h-[75vh]">
+              <div className="grid grid-cols-3 gap-4 text-xs">
+                <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1">
+                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Document Info</span>
+                  <div><span className="font-semibold text-slate-300">Invoice:</span> <span className="font-mono text-white">{currentCreditNoteDetails.header.invoice_number}</span></div>
+                  <div><span className="font-semibold text-slate-300">Date:</span> {currentCreditNoteDetails.header.credit_note_date}</div>
+                  <div><span className="font-semibold text-slate-300">Revision:</span> #{currentCreditNoteDetails.header.revision_no}</div>
+                  <div><span className="font-semibold text-slate-300">Created:</span> {currentCreditNoteDetails.header.created_at}</div>
+                </div>
+                
+                <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1">
+                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Workflow / Prints</span>
+                  <div><span className="font-semibold text-slate-300">Status:</span> <span className="font-bold text-indigo-400 uppercase">{currentCreditNoteDetails.header.status}</span></div>
+                  <div><span className="font-semibold text-slate-300">Print Count:</span> {currentCreditNoteDetails.header.print_count}</div>
+                  {currentCreditNoteDetails.header.approved_by && (
+                    <div><span className="font-semibold text-slate-300">Approved By:</span> {currentCreditNoteDetails.header.approved_by}</div>
+                  )}
+                  {currentCreditNoteDetails.header.approved_at && (
+                    <div><span className="font-semibold text-slate-300">Approved At:</span> {currentCreditNoteDetails.header.approved_at}</div>
+                  )}
+                </div>
+                
+                <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1">
+                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Customer Snapshot</span>
+                  <div className="font-bold text-white truncate">{currentCreditNoteDetails.header.frozen_customer_name}</div>
+                  <div className="truncate text-slate-300">GSTIN: {currentCreditNoteDetails.header.frozen_customer_gstin || "N/A"}</div>
+                  <div className="truncate text-slate-300">PAN: {currentCreditNoteDetails.header.frozen_customer_pan || "N/A"}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-xs bg-slate-950/20 border border-slate-800 p-4 rounded-lg">
+                <div>
+                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Reason for Issuance</span>
+                  <p className="italic text-slate-300 font-serif">{currentCreditNoteDetails.header.reason || "No reason specified"}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Internal Remarks</span>
+                  <p className="text-slate-300">{currentCreditNoteDetails.header.remarks || "No remarks"}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-slate-400 font-bold uppercase tracking-wider text-xs block">Line Items</span>
+                <div className="border border-slate-800 rounded-lg overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-slate-950/60 text-slate-300 border-b border-slate-800">
+                        <th className="p-3">Part Code</th>
+                        <th className="p-3 text-right">Credited Qty</th>
+                        <th className="p-3 text-right">Unit Rate (₹)</th>
+                        <th className="p-3 text-right">Taxable Value (₹)</th>
+                        <th className="p-3 text-right">GST Rate</th>
+                        <th className="p-3 text-right">CGST / SGST / IGST</th>
+                        <th className="p-3 text-right">Total (₹)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800 text-slate-300">
+                      {currentCreditNoteDetails.items.map((line, idx) => (
+                        <tr key={idx} className="hover:bg-slate-950/10">
+                          <td className="p-3 font-mono font-bold text-white">{line.part_code}</td>
+                          <td className="p-3 text-right font-mono font-bold">{line.quantity}</td>
+                          <td className="p-3 text-right font-mono">₹{line.rate_pre_unit.toFixed(2)}</td>
+                          <td className="p-3 text-right font-mono">₹{line.assessable_value.toFixed(2)}</td>
+                          <td className="p-3 text-right">{(line.cgst_rate + line.sgst_rate + line.igst_rate).toFixed(1)}%</td>
+                          <td className="p-3 text-right font-mono text-[10px] text-slate-400">
+                            ₹{line.cgst_amount.toFixed(2)} / ₹{line.sgst_amount.toFixed(2)} / ₹{line.igst_amount.toFixed(2)}
+                          </td>
+                          <td className="p-3 text-right font-mono font-bold text-white">₹{line.total_value.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <div className="w-72 bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1.5 text-xs font-sans">
+                  <div className="flex justify-between text-slate-400"><span>Subtotal (Taxable):</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_taxable.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-slate-400"><span>CGST Amount:</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_cgst.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-slate-400"><span>SGST Amount:</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_sgst.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-slate-400"><span>IGST Amount:</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_igst.toFixed(2)}</span></div>
+                  <div className="flex justify-between font-bold border-t border-slate-850 pt-2 text-sm text-indigo-400">
+                    <span>Grand Total:</span>
+                    <span className="font-mono">₹{currentCreditNoteDetails.tax_summary.total_value.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3 border-t border-slate-800 pt-5">
+                <span className="text-slate-400 font-bold uppercase tracking-wider text-xs block">Audit Timeline Log</span>
+                {currentCreditNoteDetails.audit_timeline.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic">No audit records found.</p>
+                ) : (
+                  <div className="relative border-l-2 border-slate-800 pl-4 ml-2 space-y-4">
+                    {currentCreditNoteDetails.audit_timeline.map((log) => (
+                      <div key={log.id} className="relative text-xs">
+                        <div className="absolute -left-[21px] top-1.5 bg-slate-800 border-2 border-slate-900 rounded-full w-2.5 h-2.5"></div>
+                        <div className="flex items-center gap-2 text-slate-400 mb-0.5">
+                          <span className="font-semibold text-slate-300">{log.user_action}</span>
+                          <span>•</span>
+                          <span className="font-mono text-[10px]">{log.timestamp}</span>
+                        </div>
+                        {log.new_value && (
+                          <div className="bg-slate-950/60 p-2 rounded mt-1 font-mono text-[9px] text-slate-400 overflow-x-auto max-w-full">
+                            {log.new_value}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/40 flex justify-end">
+              <button
+                onClick={() => setShowViewCreditNoteModal(false)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs transition-colors cursor-pointer"
+              >
+                Close View
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditCreditNoteModal && selectedCreditNoteNo && (
+        <CreditNoteEditModal
+          creditNoteNumber={selectedCreditNoteNo}
+          userName="System User"
+          onClose={() => {
+            setShowEditCreditNoteModal(false);
+            setSelectedCreditNoteNo(null);
+          }}
+          onSaved={async () => {
+            setShowEditCreditNoteModal(false);
+            setSelectedCreditNoteNo(null);
+            await loadNotes();
+          }}
+        />
+      )}
+
+      {showDeleteCreditNoteModal && selectedCreditNoteNo && (
+        <CreditNoteDeleteConfirmModal
+          creditNoteNumber={selectedCreditNoteNo}
+          userName="System User"
+          onClose={() => {
+            setShowDeleteCreditNoteModal(false);
+            setSelectedCreditNoteNo(null);
+          }}
+          onDeleted={async () => {
+            setShowDeleteCreditNoteModal(false);
+            setSelectedCreditNoteNo(null);
+            await loadNotes();
+          }}
+        />
+      )}
+
+      {showPrintCreditNoteModal && currentCreditNoteDetails && (
+        <CreditNotePrintView
+          header={currentCreditNoteDetails.header}
+          items={currentCreditNoteDetails.items}
+          taxSummary={currentCreditNoteDetails.tax_summary}
+          userName="System User"
+          onClose={() => {
+            setShowPrintCreditNoteModal(false);
+            setCurrentCreditNoteDetails(null);
+            setSelectedCreditNoteNo(null);
+          }}
+          onRefresh={async () => {
+            await loadNotes();
+            if (selectedCreditNoteNo) {
+              const res = await ApiService.getCreditNoteDetails(selectedCreditNoteNo);
+              if (res) {
+                setCurrentCreditNoteDetails(res);
+              }
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,11 +1,12 @@
 use crate::error::AppError;
 use crate::models::database_models::{
-    CreditNoteRow, CustomerRow, DebitNoteRow, FinancialYearRow, InvoiceItemRow, InvoiceRow,
-    ItemRow, SupplierRow,
+    CreditNoteHeader, CreditNoteItemRow, CreditNoteRow, CustomerRow, DebitNoteRow,
+    FinancialYearRow, InvoiceItemRow, InvoiceRow, ItemRow, SupplierRow,
 };
 use crate::models::domain_models::InvoiceSummary;
 use rusqlite::Connection;
 
+pub mod credit_note_repository;
 pub mod invoice_repo;
 pub mod master_repo;
 pub mod note_repo;
@@ -133,4 +134,15 @@ pub trait ReportRepository: Send + Sync {
         conn: &Connection,
         financial_year_id: i64,
     ) -> Result<(), AppError>;
+}
+
+pub trait CreditNoteRepository: Send + Sync {
+    fn save_header(&self, conn: &Connection, header: &CreditNoteHeader) -> Result<(), AppError>;
+    fn save_items(&self, conn: &Connection, items: &[CreditNoteItemRow]) -> Result<(), AppError>;
+    fn load_header(&self, conn: &Connection, credit_note_number: &str) -> Result<Option<CreditNoteHeader>, AppError>;
+    fn load_items(&self, conn: &Connection, credit_note_number: &str) -> Result<Vec<CreditNoteItemRow>, AppError>;
+    fn mark_deleted(&self, conn: &Connection, credit_note_number: &str, user: &str) -> Result<(), AppError>;
+    fn restore_deleted(&self, conn: &Connection, credit_note_number: &str, user: &str) -> Result<(), AppError>;
+    fn increment_print_count(&self, conn: &Connection, credit_note_number: &str, user: &str, action_type: &str) -> Result<(), AppError>;
+    fn list_credit_notes(&self, conn: &Connection, include_deleted: bool) -> Result<Vec<CreditNoteHeader>, AppError>;
 }

@@ -459,7 +459,88 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 CREATE INDEX IF NOT EXISTS idx_cdn_inv_map_inv ON customer_debit_note_invoice_map(invoice_number);
             ",
         },
+        Migration {
+            version: 9,
+            description: "Rebuild credit_notes with snapshots and create credit_note_items",
+            rebuild: false,
+            sql: "
+                CREATE TABLE credit_notes_new (
+                    credit_note_number TEXT PRIMARY KEY,
+                    invoice_number TEXT NOT NULL UNIQUE REFERENCES invoices(invoice_number) ON DELETE RESTRICT,
+                    customer_id INTEGER NOT NULL REFERENCES customers(id),
+                    credit_note_date TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'Draft' CHECK(status IN ('Draft', 'Review', 'Approved', 'Exported')),
+                    remarks TEXT,
+                    reason TEXT,
+                    revision_no INTEGER NOT NULL DEFAULT 1 CHECK(revision_no >= 1),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1)),
+                    deleted_by TEXT,
+                    deleted_at TEXT,
+                    snapshot_version INTEGER NOT NULL DEFAULT 1,
+                    frozen_company_name TEXT,
+                    frozen_company_gstin TEXT,
+                    frozen_company_address TEXT,
+                    frozen_company_state TEXT,
+                    frozen_company_state_code TEXT,
+                    frozen_company_pan TEXT,
+                    frozen_company_bank_details TEXT,
+                    frozen_customer_name TEXT,
+                    frozen_customer_gstin TEXT,
+                    frozen_customer_address TEXT,
+                    frozen_customer_state TEXT,
+                    frozen_customer_pincode TEXT,
+                    frozen_customer_pan TEXT,
+                    frozen_place_of_supply TEXT,
+                    frozen_currency TEXT DEFAULT 'INR',
+                    approved_by TEXT,
+                    approved_at TEXT,
+                    exported_by TEXT,
+                    exported_at TEXT,
+                    print_count INTEGER NOT NULL DEFAULT 0 CHECK(print_count >= 0),
+                    last_printed_at TEXT,
+                    last_printed_by TEXT
+                );
 
+                INSERT INTO credit_notes_new (
+                    credit_note_number, invoice_number, customer_id, credit_note_date,
+                    status, remarks, approved_at, created_at
+                )
+                SELECT 
+                    credit_note_number, invoice_number, customer_id, credit_note_date,
+                    status, remarks, approved_at, created_at
+                FROM credit_notes;
+
+                ALTER TABLE credit_notes RENAME TO credit_notes_backup;
+                ALTER TABLE credit_notes_new RENAME TO credit_notes;
+
+                CREATE TABLE IF NOT EXISTS credit_note_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    credit_note_number TEXT NOT NULL REFERENCES credit_notes(credit_note_number) ON DELETE CASCADE,
+                    invoice_item_id INTEGER NOT NULL,
+                    part_code TEXT NOT NULL,
+                    quantity REAL NOT NULL CHECK(quantity >= 0),
+                    rate_pre_unit INTEGER NOT NULL CHECK(rate_pre_unit >= 0),
+                    assessable_value INTEGER NOT NULL CHECK(assessable_value >= 0),
+                    cgst_rate REAL NOT NULL DEFAULT 0.0,
+                    cgst_amount INTEGER NOT NULL DEFAULT 0 CHECK(cgst_amount >= 0),
+                    sgst_rate REAL NOT NULL DEFAULT 0.0,
+                    sgst_amount INTEGER NOT NULL DEFAULT 0 CHECK(sgst_amount >= 0),
+                    igst_rate REAL NOT NULL DEFAULT 0.0,
+                    igst_amount INTEGER NOT NULL DEFAULT 0 CHECK(igst_amount >= 0),
+                    total_value INTEGER NOT NULL CHECK(total_value >= 0),
+                    original_quantity REAL NOT NULL CHECK(original_quantity >= 0),
+                    original_rate_pre_unit INTEGER NOT NULL CHECK(original_rate_pre_unit >= 0),
+                    frozen_unit_of_measure TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_cn_items_num ON credit_note_items(credit_note_number);
+                CREATE INDEX IF NOT EXISTS idx_cn_invoice_num ON credit_notes(invoice_number);
+                CREATE INDEX IF NOT EXISTS idx_cn_status_deleted ON credit_notes(status, is_deleted);
+                CREATE INDEX IF NOT EXISTS idx_cn_date ON credit_notes(credit_note_date);
+            ",
+        },
     ];
 
     // 4. Apply migrations sequentially

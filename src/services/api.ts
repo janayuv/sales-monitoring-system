@@ -8,7 +8,9 @@ import { AuditLogRow } from "../types/bindings/AuditLogRow";
 import { SupplierPriceRevisionRow } from "../types/bindings/SupplierPriceRevisionRow";
 import { DebitNoteRow } from "../types/bindings/DebitNoteRow";
 import { DebitNoteItemRow } from "../types/bindings/DebitNoteItemRow";
-import { CreditNoteRow } from "../types/bindings/CreditNoteRow";
+import { CreditNoteHeader } from "../types/bindings/CreditNoteHeader";
+import { CreditNoteDetails } from "../types/bindings/CreditNoteDetails";
+import { CreditNoteUpdatePayload } from "../types/bindings/CreditNoteUpdatePayload";
 import { SupplierRow } from "../types/bindings/SupplierRow";
 import { CustomerRow } from "../types/bindings/CustomerRow";
 // Phase 5: Export & Report types
@@ -325,8 +327,102 @@ export class ApiService {
   /**
    * Fetch all credit notes from the database.
    */
-  static async listCreditNotes(): Promise<CreditNoteRow[]> {
-    return await invoke<CreditNoteRow[]>("list_credit_notes");
+  static async listCreditNotes(includeDeleted: boolean = false): Promise<CreditNoteHeader[]> {
+    return await invoke<CreditNoteHeader[]>("list_credit_notes", { includeDeleted });
+  }
+
+  /**
+   * Fetch details, capabilities, and audit logs of a single credit note.
+   */
+  static async getCreditNoteDetails(creditNoteNumber: string): Promise<CreditNoteDetails | null> {
+    return await invoke<CreditNoteDetails | null>("get_credit_note_details", { creditNoteNumber });
+  }
+
+  /**
+   * Manually generate a credit note for a cancelled invoice.
+   */
+  static async generateCreditNoteRecord(
+    invoiceNumber: string,
+    date: string,
+    remarks: string | null,
+    reason: string | null,
+    userName: string
+  ): Promise<string> {
+    return await invoke<string>("generate_credit_note_record", {
+      invoiceNumber,
+      date,
+      remarks,
+      reason,
+      userName,
+    });
+  }
+
+  /**
+   * Update details/remarks of a Draft credit note.
+   */
+  static async updateCreditNoteRecord(payload: CreditNoteUpdatePayload, userName: string): Promise<void> {
+    await invoke("update_credit_note_record", { payload, userName });
+  }
+
+  /**
+   * Submit a Draft credit note for review.
+   */
+  static async submitCreditNoteForReview(creditNoteNumber: string, userName: string): Promise<void> {
+    await invoke("submit_credit_note_for_review", { creditNoteNumber, userName });
+  }
+
+  /**
+   * Reject a credit note in Review status back to Draft.
+   */
+  static async rejectCreditNoteToDraft(creditNoteNumber: string, userName: string): Promise<void> {
+    await invoke("reject_credit_note_to_draft", { creditNoteNumber, userName });
+  }
+
+  /**
+   * Approve a credit note.
+   */
+  static async approveCreditNoteRecord(creditNoteNumber: string, userName: string): Promise<void> {
+    await invoke("approve_credit_note_record", { creditNoteNumber, userName });
+  }
+
+  /**
+   * Export an Approved credit note.
+   */
+  static async exportCreditNoteRecord(creditNoteNumber: string, userName: string): Promise<void> {
+    await invoke("export_credit_note_record", { creditNoteNumber, userName });
+  }
+
+  /**
+   * Soft-delete a credit note.
+   */
+  static async deleteCreditNoteRecord(
+    creditNoteNumber: string,
+    userName: string,
+    confirmationNumber: string
+  ): Promise<void> {
+    await invoke("delete_credit_note_record", {
+      creditNoteNumber,
+      userName,
+      confirmationNumber,
+    });
+  }
+
+  /**
+   * Restore a soft-deleted credit note.
+   */
+  static async restoreCreditNoteRecord(creditNoteNumber: string, userName: string): Promise<void> {
+    await invoke("restore_credit_note_record", { creditNoteNumber, userName });
+  }
+
+  /**
+   * Log distinct print events.
+   */
+  static async logCreditNotePrint(
+    creditNoteNumber: string,
+    userName: string,
+    actionType: "PreviewOpened" | "PrintDialogInvoked" | "PdfExported"
+  ): Promise<void> {
+    await invoke("log_credit_note_print", { creditNoteNumber, userName, actionType });
   }
 
   // --- Phase 5: Exporters & Report Center ---

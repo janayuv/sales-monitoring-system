@@ -598,3 +598,151 @@ pub struct RevisionExcelParseResult {
     pub validation_errors: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteStatus.ts")]
+pub enum CreditNoteStatus {
+    Draft,
+    Review,
+    Approved,
+    Exported,
+}
+
+impl CreditNoteStatus {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            CreditNoteStatus::Draft => "Draft",
+            CreditNoteStatus::Review => "Review",
+            CreditNoteStatus::Approved => "Approved",
+            CreditNoteStatus::Exported => "Exported",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "Draft" => Ok(CreditNoteStatus::Draft),
+            "Review" => Ok(CreditNoteStatus::Review),
+            "Approved" => Ok(CreditNoteStatus::Approved),
+            "Exported" => Ok(CreditNoteStatus::Exported),
+            _ => Err(format!("Invalid credit note status: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteHeader.ts")]
+pub struct CreditNoteHeader {
+    pub credit_note_number: String,
+    pub invoice_number: String,
+    pub customer_id: i64,
+    pub credit_note_date: String,
+    pub status: CreditNoteStatus,
+    pub remarks: Option<String>,
+    pub reason: Option<String>,
+    pub revision_no: i32,
+    pub updated_at: String,
+    pub created_at: String,
+    pub is_deleted: bool,
+    pub deleted_by: Option<String>,
+    pub deleted_at: Option<String>,
+    pub snapshot_version: i32,
+    pub frozen_company_name: Option<String>,
+    pub frozen_company_gstin: Option<String>,
+    pub frozen_company_address: Option<String>,
+    pub frozen_company_state: Option<String>,
+    pub frozen_company_state_code: Option<String>,
+    pub frozen_company_pan: Option<String>,
+    pub frozen_company_bank_details: Option<String>,
+    pub frozen_customer_name: Option<String>,
+    pub frozen_customer_gstin: Option<String>,
+    pub frozen_customer_address: Option<String>,
+    pub frozen_customer_state: Option<String>,
+    pub frozen_customer_pincode: Option<String>,
+    pub frozen_customer_pan: Option<String>,
+    pub frozen_place_of_supply: Option<String>,
+    pub frozen_currency: String,
+    pub approved_by: Option<String>,
+    pub approved_at: Option<String>,
+    pub exported_by: Option<String>,
+    pub exported_at: Option<String>,
+    pub print_count: i32,
+    pub last_printed_at: Option<String>,
+    pub last_printed_by: Option<String>,
+    pub total_taxable: f64,
+    pub total_value: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteItemRow.ts")]
+pub struct CreditNoteItemRow {
+    pub id: Option<i64>,
+    pub credit_note_number: String,
+    pub invoice_item_id: i64,
+    pub part_code: String,
+    pub quantity: f64,
+    pub rate_pre_unit: f64,
+    pub assessable_value: f64,
+    pub cgst_rate: f64,
+    pub cgst_amount: f64,
+    pub sgst_rate: f64,
+    pub sgst_amount: f64,
+    pub igst_rate: f64,
+    pub igst_amount: f64,
+    pub total_value: f64,
+    pub original_quantity: f64,
+    pub original_rate_pre_unit: f64,
+    pub frozen_unit_of_measure: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteTaxSummary.ts")]
+pub struct CreditNoteTaxSummary {
+    pub total_taxable: f64,
+    pub total_cgst: f64,
+    pub total_sgst: f64,
+    pub total_igst: f64,
+    pub total_value: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteCapabilities.ts")]
+pub struct CreditNoteCapabilities {
+    pub can_edit: bool,
+    pub reason_edit_disabled: Option<String>,
+    pub can_delete: bool,
+    pub reason_delete_disabled: Option<String>,
+    pub can_restore: bool,
+    pub reason_restore_disabled: Option<String>,
+    pub can_submit: bool,
+    pub can_approve: bool,
+    pub can_print: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteDetails.ts")]
+pub struct CreditNoteDetails {
+    pub header: CreditNoteHeader,
+    pub tax_summary: CreditNoteTaxSummary,
+    pub items: Vec<CreditNoteItemRow>,
+    pub audit_timeline: Vec<AuditLogRow>,
+    pub capabilities: CreditNoteCapabilities,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteItemUpdatePayload.ts")]
+pub struct CreditNoteItemUpdatePayload {
+    pub invoice_item_id: i64,
+    pub quantity: f64,
+    pub rate_pre_unit: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CreditNoteUpdatePayload.ts")]
+pub struct CreditNoteUpdatePayload {
+    pub credit_note_number: String,
+    pub credit_note_date: String,
+    pub remarks: Option<String>,
+    pub reason: Option<String>,
+    pub items: Vec<CreditNoteItemUpdatePayload>,
+    pub expected_revision_no: i32,
+}
+

@@ -688,7 +688,7 @@ pub fn get_dashboard_metrics(state: State<'_, DbState>) -> Result<DashboardMetri
 
     let pending_cn: u32 = conn
         .query_row(
-            "SELECT COUNT(*) FROM credit_notes WHERE status IN ('Draft', 'Review')",
+            "SELECT COUNT(*) FROM credit_notes WHERE status IN ('Draft', 'Review') AND is_deleted = 0",
             [],
             |row| row.get::<_, i64>(0),
         )
@@ -921,14 +921,14 @@ pub fn get_financial_years_list(
 // ======================== E-Invoice JSON Helper & Commands ========================
 
 fn format_state_code(code: &str) -> String {
-    let clean = code.trim();
+    let clean: String = code.trim().chars().filter(|c| c.is_ascii_digit()).collect();
     if clean.is_empty() {
         return "37".to_string(); // default fallback (e.g. AP)
     }
     if clean.len() == 1 {
         format!("0{}", clean)
     } else {
-        clean.to_string()
+        clean[0..std::cmp::min(2, clean.len())].to_string()
     }
 }
 
@@ -1108,11 +1108,11 @@ pub fn export_credit_notes_einvoice_json(
             cn.credit_note_number,
             cn.invoice_number,
             cn.credit_note_date,
-            cn.total_taxable,
-            cn.total_cgst,
-            cn.total_sgst,
-            cn.total_igst,
-            cn.total_value,
+            COALESCE((SELECT SUM(assessable_value) FROM credit_note_items WHERE credit_note_number = cn.credit_note_number), 0) / 100.0 AS total_taxable,
+            COALESCE((SELECT SUM(cgst_amount) FROM credit_note_items WHERE credit_note_number = cn.credit_note_number), 0) / 100.0 AS total_cgst,
+            COALESCE((SELECT SUM(sgst_amount) FROM credit_note_items WHERE credit_note_number = cn.credit_note_number), 0) / 100.0 AS total_sgst,
+            COALESCE((SELECT SUM(igst_amount) FROM credit_note_items WHERE credit_note_number = cn.credit_note_number), 0) / 100.0 AS total_igst,
+            COALESCE((SELECT SUM(total_value) FROM credit_note_items WHERE credit_note_number = cn.credit_note_number), 0) / 100.0 AS total_value,
             cn.remarks,
             COALESCE(c.legal_name, c.report_name) AS customer_name,
             c.gstin,
@@ -1125,7 +1125,7 @@ pub fn export_credit_notes_einvoice_json(
          FROM credit_notes cn
          JOIN customers c ON cn.customer_id = c.id
          JOIN invoices i ON cn.invoice_number = i.invoice_number
-         WHERE cn.credit_note_date >= ? AND cn.credit_note_date <= ?
+         WHERE cn.credit_note_date >= ? AND cn.credit_note_date <= ? AND cn.is_deleted = 0
          ORDER BY cn.credit_note_date ASC, cn.credit_note_number ASC"
     ).map_err(|e| AppError::Db {
         code: "ERR_DB_003".to_string(),
@@ -1163,13 +1163,13 @@ pub fn export_credit_notes_einvoice_json(
     for cn_res in cn_rows {
         let (
             cn_number,
-            inv_number,
+            _inv_number,
             cn_date,
-            total_taxable,
-            total_cgst,
-            total_sgst,
-            total_igst,
-            total_value,
+            _total_taxable,
+            _total_cgst,
+            _total_sgst,
+            _total_igst,
+            _total_value,
             remarks,
             cust_name,
             cust_gstin_opt,
@@ -1191,15 +1191,21 @@ pub fn export_credit_notes_einvoice_json(
             cust_gstin_raw.trim().to_uppercase()
         };
         let cust_state_raw = cust_state_opt.unwrap_or_else(|| {
-            if cust_gstin.len() >= 2 {
+            if cust_gstin.len() >= 2 && cust_gstin != "URP" {
                 cust_gstin[0..2].to_string()
             } else {
-                "37".to_string() // fallback state code
+                seller_stcd.clone() // fallback state code
             }
         });
-        let cust_state = format_state_code(&cust_state_raw);
+        let mut cust_state = format_state_code(&cust_state_raw);
+        if cust_state == "UR" || cust_state == "URP" || cust_state.chars().any(|c| !c.is_ascii_digit()) {
+            cust_state = seller_stcd.clone();
+        }
         let pos_raw = pos_opt.unwrap_or_else(|| cust_state.clone());
-        let pos = format_state_code(&pos_raw);
+        let mut pos = format_state_code(&pos_raw);
+        if pos == "UR" || pos == "URP" || pos.chars().any(|c| !c.is_ascii_digit()) {
+            pos = cust_state.clone();
+        }
 
         // Resolve structured or legacy buyer address
         let (buyer_addr1, buyer_addr2, buyer_loc, buyer_pin) = if cust_location_opt.is_some() || cust_pincode_opt.is_some() {
@@ -1213,32 +1219,32 @@ pub fn export_credit_notes_einvoice_json(
             parse_address(&cust_address1_opt.unwrap_or_default())
         };
 
-        // Fetch invoice items
+        // Fetch credit note items
         let mut item_stmt = conn.prepare(
             "SELECT
-                ii.part_code,
+                ci.part_code,
                 it.part_name,
                 it.hsn_code,
-                it.uom_code,
-                ii.quantity,
-                ii.rate_pre_unit,
-                ii.assessable_value,
-                ii.cgst_rate,
-                ii.cgst_amount,
-                ii.sgst_rate,
-                ii.sgst_amount,
-                ii.igst_rate,
-                ii.igst_amount,
-                ii.total_value
-             FROM invoice_items ii
-             JOIN items it ON ii.part_code = it.part_code
-             WHERE ii.invoice_number = ?"
+                COALESCE(ci.frozen_unit_of_measure, it.uom_code) as uom_code,
+                ci.quantity,
+                ci.rate_pre_unit / 100.0,
+                ci.assessable_value / 100.0,
+                ci.cgst_rate,
+                ci.cgst_amount / 100.0,
+                ci.sgst_rate,
+                ci.sgst_amount / 100.0,
+                ci.igst_rate,
+                ci.igst_amount / 100.0,
+                ci.total_value / 100.0
+             FROM credit_note_items ci
+             JOIN items it ON ci.part_code = it.part_code
+             WHERE ci.credit_note_number = ?"
         ).map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
-            message: format!("Failed to prepare invoice items query: {}", e),
+            message: format!("Failed to prepare credit note items query: {}", e),
         })?;
 
-        let item_rows = item_stmt.query_map([&inv_number], |row| {
+        let item_rows = item_stmt.query_map([&cn_number], |row| {
             Ok((
                 row.get::<_, String>(0)?, // part_code
                 row.get::<_, String>(1)?, // part_name
@@ -1257,11 +1263,17 @@ pub fn export_credit_notes_einvoice_json(
             ))
         }).map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
-            message: format!("Failed to execute invoice items query: {}", e),
+            message: format!("Failed to execute credit note items query: {}", e),
         })?;
 
         let mut item_list = Vec::new();
         let mut sl_no_counter = 1;
+
+        let mut doc_ass_val = 0.0;
+        let mut doc_cgst_val = 0.0;
+        let mut doc_sgst_val = 0.0;
+        let mut doc_igst_val = 0.0;
+        let mut doc_tot_inv_val = 0.0;
 
         for item_res in item_rows {
             let (
@@ -1278,10 +1290,10 @@ pub fn export_credit_notes_einvoice_json(
                 sgst_amount,
                 igst_rate,
                 igst_amount,
-                tot_val,
+                _tot_val,
             ) = item_res.map_err(|e| AppError::Db {
                 code: "ERR_DB_003".to_string(),
-                message: format!("Failed to parse invoice item row: {}", e),
+                message: format!("Failed to parse credit note item row: {}", e),
             })?;
 
             let is_servc = if hsn_code.starts_with("99") { "Y" } else { "N" };
@@ -1294,6 +1306,18 @@ pub fn export_credit_notes_einvoice_json(
 
             let hsn_cd_clean: String = hsn_code.chars().filter(|c| c.is_ascii_digit()).collect();
 
+            let ass_amt = round_to_two(assessable_value);
+            let cgst_amt = round_to_two(cgst_amount);
+            let sgst_amt = round_to_two(sgst_amount);
+            let igst_amt = round_to_two(igst_amount);
+            let tot_item_val = round_to_two(ass_amt + cgst_amt + sgst_amt + igst_amt);
+
+            doc_ass_val += ass_amt;
+            doc_cgst_val += cgst_amt;
+            doc_sgst_val += sgst_amt;
+            doc_igst_val += igst_amt;
+            doc_tot_inv_val += tot_item_val;
+
             let item = crate::models::einvoice_models::EInvoiceItem {
                 sl_no: sl_no_counter.to_string(),
                 prd_desc: part_name,
@@ -1305,12 +1329,12 @@ pub fn export_credit_notes_einvoice_json(
                 unit_price: round_to_two(rate_pre_unit),
                 tot_amt: round_to_two(quantity * rate_pre_unit),
                 discount: 0.0,
-                pre_tax_val: round_to_two(assessable_value),
-                ass_amt: round_to_two(assessable_value),
+                pre_tax_val: 0.0,
+                ass_amt: ass_amt,
                 gst_rt: round_to_two(gst_rt),
-                igst_amt: round_to_two(igst_amount),
-                cgst_amt: round_to_two(cgst_amount),
-                sgst_amt: round_to_two(sgst_amount),
+                igst_amt: igst_amt,
+                cgst_amt: cgst_amt,
+                sgst_amt: sgst_amt,
                 ces_rt: 0.0,
                 ces_amt: 0.0,
                 ces_non_advl_amt: 0.0,
@@ -1318,16 +1342,21 @@ pub fn export_credit_notes_einvoice_json(
                 state_ces_amt: 0.0,
                 state_ces_non_advl_amt: 0.0,
                 oth_chrg: 0.0,
-                tot_item_val: round_to_two(tot_val),
+                tot_item_val: tot_item_val,
             };
 
             item_list.push(item);
             sl_no_counter += 1;
         }
 
-        let ref_dtls = remarks.as_ref().map(|r| crate::models::einvoice_models::RefDtls {
-            inv_rm: Some(r.clone()),
-        });
+        if item_list.is_empty() {
+            log::warn!("Skipping credit note {} from e-invoice export because it has no items", cn_number);
+            continue;
+        }
+
+        let ref_dtls = crate::models::einvoice_models::RefDtls {
+            inv_rm: Some(remarks.unwrap_or_else(|| "NICGEPP2.0".to_string())),
+        };
 
         let doc = crate::models::einvoice_models::EInvoiceDoc {
             version: "1.1".to_string(),
@@ -1367,16 +1396,16 @@ pub fn export_credit_notes_einvoice_json(
                 em: None,
             },
             val_dtls: crate::models::einvoice_models::ValDtls {
-                ass_val: round_to_two(total_taxable),
-                igst_val: round_to_two(total_igst),
-                cgst_val: round_to_two(total_cgst),
-                sgst_val: round_to_two(total_sgst),
+                ass_val: round_to_two(doc_ass_val),
+                igst_val: round_to_two(doc_igst_val),
+                cgst_val: round_to_two(doc_cgst_val),
+                sgst_val: round_to_two(doc_sgst_val),
                 ces_val: 0.0,
                 st_ces_val: 0.0,
                 discount: 0.0,
                 oth_chrg: 0.0,
                 rnd_off_amt: 0.0,
-                tot_inv_val: round_to_two(total_value),
+                tot_inv_val: round_to_two(doc_tot_inv_val),
             },
             ref_dtls,
             item_list,
@@ -1447,6 +1476,17 @@ mod tests {
             raw_gstin_whitespace.trim().to_uppercase()
         };
         assert_eq!(gstin_whitespace, "URP");
+    }
+
+    #[test]
+    fn test_format_state_code() {
+        assert_eq!(format_state_code("33"), "33");
+        assert_eq!(format_state_code("3"), "03");
+        assert_eq!(format_state_code("UR"), "37");
+        assert_eq!(format_state_code("URP"), "37");
+        assert_eq!(format_state_code(""), "37");
+        assert_eq!(format_state_code("  "), "37");
+        assert_eq!(format_state_code("37AAECI7628F1ZF"), "37");
     }
 }
 
