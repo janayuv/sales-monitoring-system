@@ -6,12 +6,50 @@ use crate::services::financial_period_service::FinancialPeriodService;
 pub struct CreditNoteValidator;
 
 impl CreditNoteValidator {
+    pub fn normalize_credit_note_number(input: &str) -> String {
+        let trimmed = input.trim();
+        let words: Vec<&str> = trimmed.split_whitespace().collect();
+        let collapsed = words.join(" ");
+        collapsed.to_uppercase()
+    }
+
     pub fn validate_input(payload: &CreditNoteUpdatePayload) -> Result<(), AppError> {
-        // Validate credit note date format (YYYY-MM-DD)
-        if payload.credit_note_date.len() != 10 {
+        // Validate credit note number (either current or new)
+        let target_cn = match payload.new_credit_note_number {
+            Some(ref new_no) if !new_no.trim().is_empty() => Self::normalize_credit_note_number(new_no),
+            _ => Self::normalize_credit_note_number(&payload.credit_note_number),
+        };
+
+        if target_cn.is_empty() {
             return Err(AppError::Validation {
                 code: "ERR_VAL_001".to_string(),
-                message: "Credit note date must be in YYYY-MM-DD format".to_string(),
+                message: "Credit Note number cannot be empty".to_string(),
+            });
+        }
+
+        if target_cn.len() > 50 {
+            return Err(AppError::Validation {
+                code: "ERR_VAL_001".to_string(),
+                message: "Credit Note number must be 50 characters or less".to_string(),
+            });
+        }
+
+        let has_alphanumeric = target_cn.chars().any(|c| c.is_ascii_alphanumeric());
+        let all_allowed = target_cn.chars().all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '-' || c == '_');
+        if !has_alphanumeric || !all_allowed {
+            return Err(AppError::Validation {
+                code: "ERR_VAL_001".to_string(),
+                message: "Credit Note number contains invalid characters or must contain at least one alphanumeric character".to_string(),
+            });
+        }
+
+        // Validate credit note date format (YYYY-MM-DD)
+        if payload.credit_note_date.len() != 10 || !payload.credit_note_date.as_bytes().iter().enumerate().all(|(i, &b)| {
+            if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() }
+        }) {
+            return Err(AppError::Validation {
+                code: "ERR_VAL_001".to_string(),
+                message: "Credit Note date must be in YYYY-MM-DD format".to_string(),
             });
         }
 
@@ -27,13 +65,14 @@ impl CreditNoteValidator {
 
         // Validate reason length
         if let Some(ref r) = payload.reason {
-            if r.is_empty() {
+            let trimmed_reason = r.trim();
+            if trimmed_reason.is_empty() {
                 return Err(AppError::Validation {
                     code: "ERR_VAL_001".to_string(),
-                    message: "Reason cannot be empty".to_string(),
+                    message: "Reason for issuance is required".to_string(),
                 });
             }
-            if r.len() > 500 {
+            if trimmed_reason.len() > 500 {
                 return Err(AppError::Validation {
                     code: "ERR_VAL_001".to_string(),
                     message: "Reason must be 500 characters or less".to_string(),
@@ -42,7 +81,7 @@ impl CreditNoteValidator {
         } else {
             return Err(AppError::Validation {
                 code: "ERR_VAL_001".to_string(),
-                message: "Reason is required for editing a credit note".to_string(),
+                message: "Reason for issuance is required for editing a credit note".to_string(),
             });
         }
 

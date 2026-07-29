@@ -739,6 +739,7 @@ pub struct CreditNoteItemUpdatePayload {
 #[ts(export, export_to = "../../src/types/bindings/CreditNoteUpdatePayload.ts")]
 pub struct CreditNoteUpdatePayload {
     pub credit_note_number: String,
+    pub new_credit_note_number: Option<String>,
     pub credit_note_date: String,
     pub remarks: Option<String>,
     pub reason: Option<String>,

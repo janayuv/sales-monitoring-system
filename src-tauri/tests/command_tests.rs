@@ -54,6 +54,7 @@ fn test_command_endpoints_integration() {
     // 3. Update command
     let payload = CreditNoteUpdatePayload {
         credit_note_number: cn_no.clone(),
+        new_credit_note_number: None,
         credit_note_date: "2026-07-29".to_string(),
         remarks: Some("Command update".to_string()),
         reason: Some("Settlement updated".to_string()),

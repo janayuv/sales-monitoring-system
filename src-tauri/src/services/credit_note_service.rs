@@ -227,15 +227,48 @@ impl CreditNoteService {
         payload: CreditNoteUpdatePayload,
         user: &str,
     ) -> Result<(), AppError> {
+        if conn.is_autocommit() {
+            let tx = conn.unchecked_transaction().map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to start transaction: {}", e),
+            })?;
+            Self::update_credit_note_internal(&tx, payload, user)?;
+            tx.commit().map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to commit transaction: {}", e),
+            })?;
+            Ok(())
+        } else {
+            Self::update_credit_note_internal(conn, payload, user)
+        }
+    }
+
+    fn update_credit_note_internal(
+        conn: &Connection,
+        payload: CreditNoteUpdatePayload,
+        user: &str,
+    ) -> Result<(), AppError> {
+        // Defer foreign key checking until transaction commit for primary key updates
+        conn.execute_batch("PRAGMA defer_foreign_keys = ON;").map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to defer foreign key checks: {}", e),
+        })?;
+
         // 1. Input validations
         CreditNoteValidator::validate_input(&payload)?;
 
+        let old_cn_number = CreditNoteValidator::normalize_credit_note_number(&payload.credit_note_number);
+        let target_cn_number = match payload.new_credit_note_number {
+            Some(ref new_no) if !new_no.trim().is_empty() => CreditNoteValidator::normalize_credit_note_number(new_no),
+            _ => old_cn_number.clone(),
+        };
+
         // 2. Load existing Header and verify state
         let repo = SqliteCreditNoteRepository;
-        let mut header = repo.load_header(conn, &payload.credit_note_number)?
+        let mut header = repo.load_header(conn, &old_cn_number)?
             .ok_or_else(|| AppError::Validation {
                 code: "ERR_VAL_006".to_string(),
-                message: format!("Credit Note {} does not exist", payload.credit_note_number),
+                message: format!("Credit Note {} does not exist", old_cn_number),
             })?;
 
         if header.is_deleted {
@@ -263,18 +296,61 @@ impl CreditNoteService {
             });
         }
 
+        // 3. Load existing Items and check Controlled Edit bounds
+        let mut items = repo.load_items(conn, &old_cn_number)?;
+        CreditNoteValidator::validate_controlled_edit(&payload, &items)?;
+
+        // 4. Duplicate Check if Credit Note Number is changing
+        if target_cn_number != old_cn_number {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM credit_notes WHERE UPPER(TRIM(credit_note_number)) = UPPER(?) AND credit_note_number != ?",
+                rusqlite::params![target_cn_number, old_cn_number],
+                |r| r.get(0),
+            ).map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to check for duplicate credit note number: {}", e),
+            })?;
+
+            if count > 0 {
+                return Err(AppError::Validation {
+                    code: "ERR_VAL_001".to_string(),
+                    message: format!("Credit Note Number \"{}\" already exists. Please choose another number.", target_cn_number),
+                });
+            }
+        }
+
+        // 5. Check No-Op condition
+        let mut items_changed = false;
+        for item_payload in &payload.items {
+            if let Some(item) = items.iter().find(|i| i.invoice_item_id == item_payload.invoice_item_id) {
+                if (item.quantity - item_payload.quantity).abs() > 1e-6 || (item.rate_pre_unit - item_payload.rate_pre_unit).abs() > 1e-6 {
+                    items_changed = true;
+                    break;
+                }
+            }
+        }
+
+        let header_cn_no_changed = target_cn_number != old_cn_number;
+        let date_changed = payload.credit_note_date != header.credit_note_date;
+        let remarks_changed = payload.remarks.as_deref().unwrap_or("").trim() != header.remarks.as_deref().unwrap_or("").trim();
+        let reason_changed = payload.reason.as_deref().unwrap_or("").trim() != header.reason.as_deref().unwrap_or("").trim();
+
+        if !header_cn_no_changed && !date_changed && !remarks_changed && !reason_changed && !items_changed {
+            // No-op: Early return without modifying revision_no, updated_at, or writing audit log
+            return Ok(());
+        }
+
         // Save old header representation for audit diff
         let old_header_json = serde_json::to_string(&header).unwrap_or_default();
 
-        // 3. Load existing Items and check Controlled Edit bounds
-        let mut items = repo.load_items(conn, &payload.credit_note_number)?;
-        CreditNoteValidator::validate_controlled_edit(&payload, &items)?;
-
-        // 4. Update and calculate item details in paise
+        // 6. Update and calculate item details in paise
         for item_payload in &payload.items {
             if let Some(item) = items.iter_mut().find(|i| i.invoice_item_id == item_payload.invoice_item_id) {
                 item.quantity = item_payload.quantity;
                 item.rate_pre_unit = item_payload.rate_pre_unit;
+                if header_cn_no_changed {
+                    item.credit_note_number = target_cn_number.clone();
+                }
 
                 // Paise calculations
                 let rate_paise = (item.rate_pre_unit * 100.0).round() as i64;
@@ -293,22 +369,72 @@ impl CreditNoteService {
             }
         }
 
-        // 5. Update Header Fields
+        // 7. Update Header Fields with Atomic Revision Check
+        let new_revision_no = header.revision_no + 1;
+        let now_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let rows_affected = conn.execute(
+            "UPDATE credit_notes 
+             SET credit_note_number = ?, credit_note_date = ?, reason = ?, remarks = ?, revision_no = ?, updated_at = ? 
+             WHERE credit_note_number = ? AND revision_no = ?",
+            rusqlite::params![
+                target_cn_number,
+                payload.credit_note_date,
+                payload.reason,
+                payload.remarks,
+                new_revision_no,
+                now_str,
+                old_cn_number,
+                header.revision_no
+            ],
+        ).map_err(|e| {
+            if e.to_string().contains("UNIQUE constraint failed") {
+                AppError::Validation {
+                    code: "ERR_VAL_001".to_string(),
+                    message: format!("Credit Note Number \"{}\" already exists. Please choose another number.", target_cn_number),
+                }
+            } else {
+                AppError::Db {
+                    code: "ERR_DB_003".to_string(),
+                    message: format!("Failed to update credit note header: {}", e),
+                }
+            }
+        })?;
+
+        if rows_affected == 0 {
+            return Err(AppError::Validation {
+                code: "ERR_VAL_007".to_string(),
+                message: "The record was updated by another user. Please refresh and try again.".to_string(),
+            });
+        }
+
+        // 8. Cascading update for credit_note_items if Credit Note Number was renamed
+        if header_cn_no_changed {
+            conn.execute(
+                "UPDATE credit_note_items SET credit_note_number = ? WHERE credit_note_number = ?",
+                rusqlite::params![target_cn_number, old_cn_number],
+            ).map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to update credit note items foreign key: {}", e),
+            })?;
+        }
+
+        // Update local header copy
+        header.credit_note_number = target_cn_number.clone();
         header.credit_note_date = payload.credit_note_date;
         header.remarks = payload.remarks;
         header.reason = payload.reason;
-        header.revision_no += 1;
-        header.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        header.revision_no = new_revision_no;
+        header.updated_at = now_str;
 
-        // 6. Persist
-        repo.save_header(conn, &header)?;
+        // 9. Persist item rows
         repo.save_items(conn, &items)?;
 
-        // 7. Audit Log
+        // 10. Write Audit Log (Failure is fatal and will trigger transaction rollback)
         let new_header_json = serde_json::to_string(&header).unwrap_or_default();
         log_audit(
             conn,
-            &format!("Credit Note updated by {}", user),
+            &format!("Credit Note edited by {}", user),
             &header.credit_note_number,
             Some(&old_header_json),
             Some(&new_header_json),

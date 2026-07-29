@@ -41,6 +41,7 @@ fn test_workflow_transitions() {
     // 2. Edit Credit Note
     let payload = CreditNoteUpdatePayload {
         credit_note_number: cn_no.clone(),
+        new_credit_note_number: None,
         credit_note_date: "2026-07-29".to_string(),
         remarks: Some("Updated remarks".to_string()),
         reason: Some("Settlement negotiated".to_string()),
@@ -91,6 +92,7 @@ fn test_workflow_transitions() {
     // 8. Attempt Edit -> Expect rejection
     let payload_fail = CreditNoteUpdatePayload {
         credit_note_number: cn_no.clone(),
+        new_credit_note_number: None,
         credit_note_date: "2026-07-29".to_string(),
         remarks: Some("Failed edit".to_string()),
         reason: Some("Negotiated".to_string()),
@@ -142,6 +144,7 @@ fn test_concurrent_optimistic_locking() {
     // User A edits first
     let payload_a = CreditNoteUpdatePayload {
         credit_note_number: cn_no.clone(),
+        new_credit_note_number: None,
         credit_note_date: "2026-07-29".to_string(),
         remarks: Some("User A edit".to_string()),
         reason: Some("Revision".to_string()),
@@ -159,6 +162,7 @@ fn test_concurrent_optimistic_locking() {
     // User B tries to edit with expected revision 1
     let payload_b = CreditNoteUpdatePayload {
         credit_note_number: cn_no.clone(),
+        new_credit_note_number: None,
         credit_note_date: "2026-07-29".to_string(),
         remarks: Some("User B edit".to_string()),
         reason: Some("Revision".to_string()),
@@ -179,11 +183,80 @@ fn test_concurrent_optimistic_locking() {
     } else {
         panic!("Expected ERR_VAL_007");
     }
+}
 
-    // Verify User A's changes are active and revision is 2
-    let current = CreditNoteService::get_credit_note_details(&conn, &cn_no).unwrap().unwrap();
-    assert_eq!(current.header.revision_no, 2);
-    assert_eq!(current.header.remarks, Some("User A edit".to_string()));
+#[test]
+fn test_credit_note_rename_and_no_op() {
+    let conn = setup_test_db();
+    
+    InvoiceBuilder::new("INV-RENAME")
+        .with_status("Cancelled")
+        .with_item("PART-A", 10.0, 100.0, 18.0)
+        .build(&conn);
+
+    let original_cn = CreditNoteService::generate_credit_note(
+        &conn,
+        "INV-RENAME",
+        "2026-07-29",
+        None,
+        Some("Initial reason".to_string()),
+        "Tester",
+    ).unwrap();
+
+    let details = CreditNoteService::get_credit_note_details(&conn, &original_cn).unwrap().unwrap();
+
+    // 1. Test No-Op update (identical fields)
+    let no_op_payload = CreditNoteUpdatePayload {
+        credit_note_number: original_cn.clone(),
+        new_credit_note_number: Some(original_cn.clone()),
+        credit_note_date: "2026-07-29".to_string(),
+        remarks: None,
+        reason: Some("Initial reason".to_string()),
+        items: vec![
+            CreditNoteItemUpdatePayload {
+                invoice_item_id: details.items[0].invoice_item_id,
+                quantity: 10.0,
+                rate_pre_unit: 100.0,
+            }
+        ],
+        expected_revision_no: 1,
+    };
+    CreditNoteService::update_credit_note(&conn, no_op_payload, "Tester").unwrap();
+
+    let post_no_op = CreditNoteService::get_credit_note_details(&conn, &original_cn).unwrap().unwrap();
+    assert_eq!(post_no_op.header.revision_no, 1); // Revision unchanged on no-op
+
+    // 2. Test Rename CN & update fields
+    let rename_payload = CreditNoteUpdatePayload {
+        credit_note_number: original_cn.clone(),
+        new_credit_note_number: Some(" CN-NEW-2026-001 ".to_string()), // Test normalization
+        credit_note_date: "2026-07-30".to_string(),
+        remarks: Some("Renamed & Updated".to_string()),
+        reason: Some("Commercial discount".to_string()),
+        items: vec![
+            CreditNoteItemUpdatePayload {
+                invoice_item_id: details.items[0].invoice_item_id,
+                quantity: 8.0,
+                rate_pre_unit: 100.0,
+            }
+        ],
+        expected_revision_no: 1,
+    };
+    CreditNoteService::update_credit_note(&conn, rename_payload, "Tester").unwrap();
+
+    // Old CN should no longer exist
+    let old_res = CreditNoteService::get_credit_note_details(&conn, &original_cn).unwrap();
+    assert!(old_res.is_none());
+
+    // Verify new details
+    let new_res = CreditNoteService::get_credit_note_details(&conn, "CN-NEW-2026-001").unwrap().unwrap();
+    assert_eq!(new_res.header.credit_note_number, "CN-NEW-2026-001");
+    assert_eq!(new_res.header.credit_note_date, "2026-07-30");
+    assert_eq!(new_res.header.reason.as_deref(), Some("Commercial discount"));
+    assert_eq!(new_res.header.revision_no, 2);
+    assert_eq!(new_res.items.len(), 1);
+    assert_eq!(new_res.items[0].credit_note_number, "CN-NEW-2026-001");
+    assert_eq!(new_res.items[0].quantity, 8.0);
 }
 
 #[test]

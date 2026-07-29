@@ -892,7 +892,13 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
                   </h3>
                   <p className="text-xs text-[var(--ember-text-muted)] mt-1">Customer: {selectedDN.frozen_customer_name}</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleOpenPrintView(selectedDN.id)}
+                    className="px-3 py-1.5 bg-[var(--ember-primary)] hover:bg-[var(--ember-primary-hover)] text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> View Voucher
+                  </button>
                   {["Verified", "Approved", "Posted", "Locked"].map((st) => (
                     <button
                       key={st}

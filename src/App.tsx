@@ -31,7 +31,8 @@ import {
   RotateCcw,
   LayoutGrid,
   Edit2,
-  Printer
+  Printer,
+  X
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
@@ -2879,63 +2880,96 @@ function App() {
 
       {/* Credit Note Lifecycle Modals & Print Overlays */}
       {showViewCreditNoteModal && currentCreditNoteDetails && (
-        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm overflow-y-auto p-4 flex justify-center items-start pt-10 font-sans text-xs text-slate-100 print:hidden">
-          <div className="bg-slate-900 border border-slate-800 text-slate-100 w-full max-w-4xl rounded-xl shadow-2xl overflow-hidden flex flex-col my-4">
-            <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/40">
-              <div>
-                <h2 className="text-lg font-bold text-white">👁️ Credit Note Details: {selectedCreditNoteNo}</h2>
-                <p className="text-xs text-slate-400 mt-1">Audit Trail & Capabilities</p>
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md overflow-y-auto p-4 sm:p-6 flex justify-center items-start pt-6 sm:pt-10 print:hidden">
+          <div className="ember-card bg-[var(--ember-surface)] border border-[var(--ember-border)] text-[var(--ember-text-primary)] w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-[var(--ember-border)] flex justify-between items-center bg-[var(--ember-surface-raised)]">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-xl">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold font-serif text-[var(--ember-text-primary)] tracking-wide flex items-center gap-2">
+                    Credit Note Details: <span className="font-mono text-[var(--ember-primary)]">{selectedCreditNoteNo}</span>
+                  </h2>
+                  <p className="text-xs text-[var(--ember-text-muted)] font-sans mt-0.5">Audit Trail, Items & Tax Breakdown</p>
+                </div>
               </div>
-              <button onClick={() => setShowViewCreditNoteModal(false)} className="text-slate-400 hover:text-white transition-colors text-lg cursor-pointer">✕</button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handlePrintCreditNote(selectedCreditNoteNo!)}
+                  className="px-3.5 py-1.5 bg-[var(--ember-primary)] hover:bg-[var(--ember-primary-hover)] text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer inline-flex items-center gap-1.5 transition-all"
+                >
+                  <Printer className="w-3.5 h-3.5" /> View Voucher
+                </button>
+                <button
+                  onClick={() => setShowViewCreditNoteModal(false)}
+                  className="p-1.5 text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)] rounded-lg transition-colors cursor-pointer"
+                  title="Close modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             
+            {/* Modal Content */}
             <div className="p-6 space-y-6 flex-1 overflow-y-auto max-h-[75vh]">
-              <div className="grid grid-cols-3 gap-4 text-xs">
-                <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1">
-                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Document Info</span>
-                  <div><span className="font-semibold text-slate-300">Invoice:</span> <span className="font-mono text-white">{currentCreditNoteDetails.header.invoice_number}</span></div>
-                  <div><span className="font-semibold text-slate-300">Date:</span> {currentCreditNoteDetails.header.credit_note_date}</div>
-                  <div><span className="font-semibold text-slate-300">Revision:</span> #{currentCreditNoteDetails.header.revision_no}</div>
-                  <div><span className="font-semibold text-slate-300">Created:</span> {currentCreditNoteDetails.header.created_at}</div>
+              {/* Metadata Cards */}
+              <div className="grid grid-cols-3 gap-4 text-xs font-sans">
+                <div className="bg-[var(--ember-bg)] border border-[var(--ember-border)] rounded-xl p-4 space-y-1.5 shadow-xs">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ember-primary)] block mb-1">Document Info</span>
+                  <div><span className="font-semibold text-[var(--ember-text-secondary)]">Invoice:</span> <span className="font-mono font-bold text-[var(--ember-text-primary)]">{currentCreditNoteDetails.header.invoice_number}</span></div>
+                  <div><span className="font-semibold text-[var(--ember-text-secondary)]">Date:</span> <span className="font-mono text-[var(--ember-text-primary)]">{currentCreditNoteDetails.header.credit_note_date}</span></div>
+                  <div><span className="font-semibold text-[var(--ember-text-secondary)]">Revision:</span> <span className="font-mono text-[var(--ember-text-primary)]">#{currentCreditNoteDetails.header.revision_no}</span></div>
+                  <div><span className="font-semibold text-[var(--ember-text-secondary)]">Created:</span> <span className="text-[var(--ember-text-muted)]">{currentCreditNoteDetails.header.created_at}</span></div>
                 </div>
                 
-                <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1">
-                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Workflow / Prints</span>
-                  <div><span className="font-semibold text-slate-300">Status:</span> <span className="font-bold text-indigo-400 uppercase">{currentCreditNoteDetails.header.status}</span></div>
-                  <div><span className="font-semibold text-slate-300">Print Count:</span> {currentCreditNoteDetails.header.print_count}</div>
+                <div className="bg-[var(--ember-bg)] border border-[var(--ember-border)] rounded-xl p-4 space-y-1.5 shadow-xs">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ember-primary)] block mb-1">Workflow / Prints</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-[var(--ember-text-secondary)]">Status:</span> 
+                    <span className={`font-bold uppercase px-2 py-0.5 rounded text-[10px] ${
+                      currentCreditNoteDetails.header.status === "Approved" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30" : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                    }`}>
+                      {currentCreditNoteDetails.header.status}
+                    </span>
+                  </div>
+                  <div><span className="font-semibold text-[var(--ember-text-secondary)]">Print Count:</span> <span className="font-mono font-bold text-[var(--ember-text-primary)]">{currentCreditNoteDetails.header.print_count}</span></div>
                   {currentCreditNoteDetails.header.approved_by && (
-                    <div><span className="font-semibold text-slate-300">Approved By:</span> {currentCreditNoteDetails.header.approved_by}</div>
+                    <div><span className="font-semibold text-[var(--ember-text-secondary)]">Approved By:</span> <span className="text-[var(--ember-text-primary)]">{currentCreditNoteDetails.header.approved_by}</span></div>
                   )}
                   {currentCreditNoteDetails.header.approved_at && (
-                    <div><span className="font-semibold text-slate-300">Approved At:</span> {currentCreditNoteDetails.header.approved_at}</div>
+                    <div><span className="font-semibold text-[var(--ember-text-secondary)]">Approved At:</span> <span className="text-[var(--ember-text-muted)]">{currentCreditNoteDetails.header.approved_at}</span></div>
                   )}
                 </div>
                 
-                <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1">
-                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Customer Snapshot</span>
-                  <div className="font-bold text-white truncate">{currentCreditNoteDetails.header.frozen_customer_name}</div>
-                  <div className="truncate text-slate-300">GSTIN: {currentCreditNoteDetails.header.frozen_customer_gstin || "N/A"}</div>
-                  <div className="truncate text-slate-300">PAN: {currentCreditNoteDetails.header.frozen_customer_pan || "N/A"}</div>
+                <div className="bg-[var(--ember-bg)] border border-[var(--ember-border)] rounded-xl p-4 space-y-1.5 shadow-xs">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ember-primary)] block mb-1">Customer Snapshot</span>
+                  <div className="font-bold text-[var(--ember-text-primary)] truncate">{currentCreditNoteDetails.header.frozen_customer_name}</div>
+                  <div className="truncate text-[var(--ember-text-secondary)]"><span className="font-semibold">GSTIN:</span> {currentCreditNoteDetails.header.frozen_customer_gstin || "N/A"}</div>
+                  <div className="truncate text-[var(--ember-text-secondary)]"><span className="font-semibold">PAN:</span> {currentCreditNoteDetails.header.frozen_customer_pan || "N/A"}</div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 text-xs bg-slate-950/20 border border-slate-800 p-4 rounded-lg">
+              {/* Reasons & Remarks */}
+              <div className="grid grid-cols-2 gap-4 text-xs bg-[var(--ember-bg)] border border-[var(--ember-border)] p-4 rounded-xl shadow-xs font-sans">
                 <div>
-                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Reason for Issuance</span>
-                  <p className="italic text-slate-300 font-serif">{currentCreditNoteDetails.header.reason || "No reason specified"}</p>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ember-text-secondary)] block mb-1">Reason for Issuance</span>
+                  <p className="italic text-[var(--ember-text-primary)] font-serif">{currentCreditNoteDetails.header.reason || "No reason specified"}</p>
                 </div>
                 <div>
-                  <span className="text-slate-500 font-bold uppercase tracking-wider block mb-1">Internal Remarks</span>
-                  <p className="text-slate-300">{currentCreditNoteDetails.header.remarks || "No remarks"}</p>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--ember-text-secondary)] block mb-1">Internal Remarks</span>
+                  <p className="text-[var(--ember-text-secondary)]">{currentCreditNoteDetails.header.remarks || "No remarks"}</p>
                 </div>
               </div>
 
+              {/* Line Items Table */}
               <div className="space-y-2">
-                <span className="text-slate-400 font-bold uppercase tracking-wider text-xs block">Line Items</span>
-                <div className="border border-slate-800 rounded-lg overflow-hidden">
+                <span className="text-xs font-bold uppercase tracking-wider text-[var(--ember-text-secondary)] block">Line Items</span>
+                <div className="border border-[var(--ember-border)] rounded-xl overflow-hidden bg-[var(--ember-bg)] shadow-xs">
                   <table className="w-full text-left text-xs">
                     <thead>
-                      <tr className="bg-slate-950/60 text-slate-300 border-b border-slate-800">
+                      <tr className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)] uppercase tracking-wider text-[11px]">
                         <th className="p-3">Part Code</th>
                         <th className="p-3 text-right">Credited Qty</th>
                         <th className="p-3 text-right">Unit Rate (₹)</th>
@@ -2945,18 +2979,18 @@ function App() {
                         <th className="p-3 text-right">Total (₹)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800 text-slate-300">
+                    <tbody className="divide-y divide-[var(--ember-border-subtle)] text-[var(--ember-text-secondary)] font-sans">
                       {currentCreditNoteDetails.items.map((line, idx) => (
-                        <tr key={idx} className="hover:bg-slate-950/10">
-                          <td className="p-3 font-mono font-bold text-white">{line.part_code}</td>
-                          <td className="p-3 text-right font-mono font-bold">{line.quantity}</td>
+                        <tr key={idx} className="hover:bg-[var(--ember-surface-raised)]/40 transition-colors">
+                          <td className="p-3 font-mono font-bold text-[var(--ember-primary)]">{line.part_code}</td>
+                          <td className="p-3 text-right font-mono font-bold text-[var(--ember-text-primary)]">{line.quantity}</td>
                           <td className="p-3 text-right font-mono">₹{line.rate_pre_unit.toFixed(2)}</td>
                           <td className="p-3 text-right font-mono">₹{line.assessable_value.toFixed(2)}</td>
-                          <td className="p-3 text-right">{(line.cgst_rate + line.sgst_rate + line.igst_rate).toFixed(1)}%</td>
-                          <td className="p-3 text-right font-mono text-[10px] text-slate-400">
+                          <td className="p-3 text-right font-mono">{(line.cgst_rate + line.sgst_rate + line.igst_rate).toFixed(1)}%</td>
+                          <td className="p-3 text-right font-mono text-[10px] text-[var(--ember-text-muted)]">
                             ₹{line.cgst_amount.toFixed(2)} / ₹{line.sgst_amount.toFixed(2)} / ₹{line.igst_amount.toFixed(2)}
                           </td>
-                          <td className="p-3 text-right font-mono font-bold text-white">₹{line.total_value.toFixed(2)}</td>
+                          <td className="p-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">₹{line.total_value.toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2964,35 +2998,37 @@ function App() {
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <div className="w-72 bg-slate-950/40 border border-slate-800 rounded-lg p-3.5 space-y-1.5 text-xs font-sans">
-                  <div className="flex justify-between text-slate-400"><span>Subtotal (Taxable):</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_taxable.toFixed(2)}</span></div>
-                  <div className="flex justify-between text-slate-400"><span>CGST Amount:</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_cgst.toFixed(2)}</span></div>
-                  <div className="flex justify-between text-slate-400"><span>SGST Amount:</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_sgst.toFixed(2)}</span></div>
-                  <div className="flex justify-between text-slate-400"><span>IGST Amount:</span> <span className="font-mono text-white">₹{currentCreditNoteDetails.tax_summary.total_igst.toFixed(2)}</span></div>
-                  <div className="flex justify-between font-bold border-t border-slate-850 pt-2 text-sm text-indigo-400">
+              {/* Tax Summary Totals */}
+              <div className="flex justify-end font-sans">
+                <div className="w-80 bg-[var(--ember-bg)] border border-[var(--ember-border)] rounded-xl p-4 space-y-2 text-xs shadow-xs">
+                  <div className="flex justify-between text-[var(--ember-text-secondary)]"><span>Subtotal (Taxable):</span> <span className="font-mono font-semibold text-[var(--ember-text-primary)]">₹{currentCreditNoteDetails.tax_summary.total_taxable.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-[var(--ember-text-secondary)]"><span>CGST Amount:</span> <span className="font-mono text-[var(--ember-text-secondary)]">₹{currentCreditNoteDetails.tax_summary.total_cgst.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-[var(--ember-text-secondary)]"><span>SGST Amount:</span> <span className="font-mono text-[var(--ember-text-secondary)]">₹{currentCreditNoteDetails.tax_summary.total_sgst.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-[var(--ember-text-secondary)]"><span>IGST Amount:</span> <span className="font-mono text-[var(--ember-text-secondary)]">₹{currentCreditNoteDetails.tax_summary.total_igst.toFixed(2)}</span></div>
+                  <div className="flex justify-between font-bold border-t border-[var(--ember-border)] pt-2 text-sm text-[var(--ember-primary)]">
                     <span>Grand Total:</span>
-                    <span className="font-mono">₹{currentCreditNoteDetails.tax_summary.total_value.toFixed(2)}</span>
+                    <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">₹{currentCreditNoteDetails.tax_summary.total_value.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-3 border-t border-slate-800 pt-5">
-                <span className="text-slate-400 font-bold uppercase tracking-wider text-xs block">Audit Timeline Log</span>
+              {/* Audit Timeline Log */}
+              <div className="space-y-3 border-t border-[var(--ember-border)] pt-5">
+                <span className="text-xs font-bold uppercase tracking-wider text-[var(--ember-text-secondary)] block">Audit Timeline Log</span>
                 {currentCreditNoteDetails.audit_timeline.length === 0 ? (
-                  <p className="text-xs text-slate-500 italic">No audit records found.</p>
+                  <p className="text-xs text-[var(--ember-text-muted)] italic">No audit records found.</p>
                 ) : (
-                  <div className="relative border-l-2 border-slate-800 pl-4 ml-2 space-y-4">
+                  <div className="relative border-l-2 border-[var(--ember-primary)]/40 pl-4 ml-2 space-y-4">
                     {currentCreditNoteDetails.audit_timeline.map((log) => (
-                      <div key={log.id} className="relative text-xs">
-                        <div className="absolute -left-[21px] top-1.5 bg-slate-800 border-2 border-slate-900 rounded-full w-2.5 h-2.5"></div>
-                        <div className="flex items-center gap-2 text-slate-400 mb-0.5">
-                          <span className="font-semibold text-slate-300">{log.user_action}</span>
+                      <div key={log.id} className="relative text-xs font-sans">
+                        <div className="absolute -left-[21px] top-1.5 bg-[var(--ember-primary)] rounded-full w-2.5 h-2.5"></div>
+                        <div className="flex items-center gap-2 text-[var(--ember-text-secondary)] mb-0.5">
+                          <span className="font-bold text-[var(--ember-text-primary)]">{log.user_action}</span>
                           <span>•</span>
-                          <span className="font-mono text-[10px]">{log.timestamp}</span>
+                          <span className="font-mono text-[10px] text-[var(--ember-text-muted)]">{log.timestamp}</span>
                         </div>
                         {log.new_value && (
-                          <div className="bg-slate-950/60 p-2 rounded mt-1 font-mono text-[9px] text-slate-400 overflow-x-auto max-w-full">
+                          <div className="bg-[var(--ember-bg)] border border-[var(--ember-border)] p-2.5 rounded-lg mt-1 font-mono text-[10px] text-[var(--ember-text-secondary)] overflow-x-auto max-w-full">
                             {log.new_value}
                           </div>
                         )}
@@ -3003,10 +3039,17 @@ function App() {
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-slate-800 bg-slate-950/40 flex justify-end">
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-[var(--ember-border)] bg-[var(--ember-surface-raised)] flex justify-between items-center">
+              <button
+                onClick={() => handlePrintCreditNote(selectedCreditNoteNo!)}
+                className="ember-btn-primary px-4 py-2 text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" /> Print / Save Voucher
+              </button>
               <button
                 onClick={() => setShowViewCreditNoteModal(false)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs transition-colors cursor-pointer"
+                className="ember-btn-secondary px-5 py-2 text-xs cursor-pointer"
               >
                 Close View
               </button>
@@ -3021,11 +3064,12 @@ function App() {
           userName="System User"
           onClose={() => {
             setShowEditCreditNoteModal(false);
-            setSelectedCreditNoteNo(null);
           }}
-          onSaved={async () => {
+          onSaved={async (newCnNo?: string) => {
             setShowEditCreditNoteModal(false);
-            setSelectedCreditNoteNo(null);
+            if (newCnNo) {
+              setSelectedCreditNoteNo(newCnNo);
+            }
             await loadNotes();
           }}
         />
