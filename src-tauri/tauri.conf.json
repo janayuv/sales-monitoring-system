@@ -35,7 +35,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWSbj3iL4Pp2Ck//uV/lS2F32AOaBX8wJBRaqILZQb4KgdDr5Zei340T",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgOEY3ODhCRTBGQTc2MEE0RgpSV1NiajNpTDRQcDJDay8vdVYvbFMyRjMyQU9hQlg4d0pCUmFxSUxaUWI0S2dkRHI1WmVpMzQwVA==",
       "endpoints": [
         "https://github.com/janayuv/sales-monitoring-system/releases/latest/download/latest.json"
       ]
