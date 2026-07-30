@@ -32,7 +32,9 @@ import {
   LayoutGrid,
   Edit2,
   Printer,
-  X
+  X,
+  PanelLeftClose,
+  PanelLeftOpen
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
@@ -78,6 +80,28 @@ function App() {
   // Update scheduler & states
   useUpdaterScheduler();
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+
+  // Sidebar visibility state persisted in localStorage
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
+    const saved = localStorage.getItem("sidebar_open");
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("sidebar_open", JSON.stringify(isSidebarOpen));
+  }, [isSidebarOpen]);
+
+  // Keyboard shortcut Ctrl+B / Cmd+B to toggle sidebar hide/unhide
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setIsSidebarOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Navigation & Core States
   const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "cust_debit_notes" | "revisions" | "notes" | "reports" | "settings">("dashboard");
@@ -915,17 +939,32 @@ function App() {
   return (
     <div className="flex h-screen bg-[var(--ember-bg)] text-[var(--ember-text-primary)] font-sans overflow-hidden transition-colors duration-200">
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-[var(--ember-sidebar-bg)] border-r border-[var(--ember-border)] flex flex-col justify-between z-10 select-none">
+      <aside
+        className={`bg-[var(--ember-sidebar-bg)] border-r border-[var(--ember-border)] flex flex-col justify-between z-10 select-none transition-all duration-300 ease-in-out shrink-0 ${
+          isSidebarOpen
+            ? "w-64 opacity-100"
+            : "w-0 opacity-0 overflow-hidden border-r-0 pointer-events-none"
+        }`}
+      >
         <div>
           {/* Logo Header */}
-          <div className="h-16 flex items-center px-6 border-b border-[var(--ember-border)] gap-3">
-            <div className="p-2 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-lg">
-              <TrendingUp className="w-6 h-6" />
+          <div className="h-16 flex items-center justify-between px-6 border-b border-[var(--ember-border)] gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-lg flex-shrink-0">
+                <TrendingUp className="w-6 h-6" />
+              </div>
+              <div className="min-w-0 overflow-hidden">
+                <h1 className="text-sm font-bold font-serif tracking-wide uppercase text-[var(--ember-primary)] truncate">Sales Monitor</h1>
+                <p className="text-[10px] text-[var(--ember-text-muted)] truncate">Offline ERP Matcher</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-sm font-bold font-serif tracking-wide uppercase text-[var(--ember-primary)]">Sales Monitor</h1>
-              <p className="text-[10px] text-[var(--ember-text-muted)]">Offline ERP Matcher</p>
-            </div>
+            <button
+              onClick={() => setIsSidebarOpen(false)}
+              className="p-1.5 hover:bg-[var(--ember-surface-raised)] text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] rounded-lg transition-colors flex-shrink-0 cursor-pointer"
+              title="Hide Sidebar (Ctrl+B)"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Nav Items */}
@@ -1001,10 +1040,18 @@ function App() {
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative">
         {/* Top Header */}
-        <header className="h-16 border-b border-[var(--ember-border)] bg-[var(--ember-header-bg)] backdrop-blur-md flex items-center justify-between px-8 z-10">
-          <div>
-            <span className="text-xs text-[var(--ember-text-muted)] font-medium">Outward Matching Engine</span>
-            <h2 className="text-base font-bold font-serif text-[var(--ember-text-primary)]">
+        <header className="h-16 border-b border-[var(--ember-border)] bg-[var(--ember-header-bg)] backdrop-blur-md flex items-center justify-between px-6 z-10">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSidebarOpen((prev) => !prev)}
+              className="p-2 text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)] border border-[var(--ember-border)] rounded-lg transition-colors cursor-pointer flex items-center justify-center shadow-sm"
+              title={isSidebarOpen ? "Hide Sidebar (Ctrl+B)" : "Unhide Sidebar (Ctrl+B)"}
+            >
+              {isSidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4 text-[var(--ember-primary)]" />}
+            </button>
+            <div>
+              <span className="text-xs text-[var(--ember-text-muted)] font-medium">Outward Matching Engine</span>
+              <h2 className="text-base font-bold font-serif text-[var(--ember-text-primary)]">
               {activeTab === "dashboard" && "Dashboard Overview"}
               {activeTab === "registers" && "Sales Invoice Registers"}
               {activeTab === "revisions" && "Supplier Price Revisions Tracker"}
@@ -1016,6 +1063,7 @@ function App() {
               {activeTab === "cust_debit_notes" && "Customer Retrospective Price Revision Debit Notes"}
             </h2>
           </div>
+        </div>
 
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 bg-[var(--ember-surface-raised)] px-3 py-1.5 rounded-lg border border-[var(--ember-border)] text-xs text-[var(--ember-text-primary)]">
