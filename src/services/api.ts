@@ -131,7 +131,7 @@ export class ApiService {
   static async listInvoices(
     cursorDate?: string | null,
     cursorNo?: string | null,
-    limit: number = 50
+    limit: number = 10000
   ): Promise<InvoiceSummary[]> {
     return await invoke<InvoiceSummary[]>("list_invoices_paginated", {
       cursorDate: cursorDate || null,

@@ -106,9 +106,14 @@ function App() {
   // Navigation & Core States
   const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "cust_debit_notes" | "revisions" | "notes" | "reports" | "settings">("dashboard");
 
-  const [companyCode, setCompanyCode] = useState("DEMO");
-  const [encryptionKey, setEncryptionKey] = useState("demo1234");
+  const [companyCode, setCompanyCode] = useState<string>(() => {
+    return localStorage.getItem("active_company_code") || "DEMO";
+  });
+  const [encryptionKey, setEncryptionKey] = useState<string>(() => {
+    return localStorage.getItem("active_encryption_key") || "demo1234";
+  });
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(true);
   const [activeFY] = useState("FY 2025-26");
 
   // Suppliers master lookup
@@ -271,9 +276,14 @@ function App() {
   const [tallyRegisterCode, setTallyRegisterCode] = useState("TF");
   const [isSavingRegisterCode, setIsSavingRegisterCode] = useState(false);
 
-  // Auto-connect to DEMO profile on startup
+  // Auto-connect to profile on startup / refresh unless user explicitly disconnected
   useEffect(() => {
-    handleConnect();
+    const wasConnected = localStorage.getItem("was_connected");
+    if (wasConnected !== "false") {
+      handleConnect();
+    } else {
+      setIsConnecting(false);
+    }
   }, []);
 
   // Reload lists on navigation
@@ -297,10 +307,19 @@ function App() {
     }
   }, [activeTab, isConnected]);
 
-  const handleConnect = async () => {
+  const handleConnect = async (codeOverride?: string, keyOverride?: string) => {
+    const targetCode = codeOverride || companyCode;
+    const targetKey = keyOverride || encryptionKey;
+    setIsConnecting(true);
     try {
-      await ApiService.switchCompanyProfile(companyCode, encryptionKey);
+      await ApiService.switchCompanyProfile(targetCode, targetKey);
+      setCompanyCode(targetCode);
+      setEncryptionKey(targetKey);
       setIsConnected(true);
+      localStorage.setItem("active_company_code", targetCode);
+      localStorage.setItem("active_encryption_key", targetKey);
+      localStorage.setItem("was_connected", "true");
+
       loadTallyRegisterCode();
       
       const list = await ApiService.getImportTemplates();
@@ -310,14 +329,24 @@ function App() {
       }
     } catch (err: any) {
       console.error(err);
-      alert(`Connection failed: ${err.message || err}`);
+      setIsConnected(false);
+      if (codeOverride || keyOverride) {
+        alert(`Connection failed: ${err.message || err}`);
+      }
+    } finally {
+      setIsConnecting(false);
     }
+  };
+
+  const handleConnectDemo = async () => {
+    await handleConnect("DEMO", "demo1234");
   };
 
   const handleDisconnect = async () => {
     try {
       await ApiService.closeActiveProfile();
       setIsConnected(false);
+      localStorage.setItem("was_connected", "false");
       setTemplates([]);
       setPreviewData(null);
       setSelectedFilePath("");
@@ -342,7 +371,7 @@ function App() {
   const loadInvoices = async (cDate?: string | null, cNo?: string | null) => {
     setLoadingInvoices(true);
     try {
-      const list = await ApiService.listInvoices(cDate, cNo, 12);
+      const list = await ApiService.listInvoices(cDate, cNo, 10000);
       setInvoices(list);
     } catch (err) {
       console.error(err);
@@ -976,25 +1005,41 @@ function App() {
         <div className="p-4 border-t border-[var(--ember-border)] bg-[var(--ember-surface)]">
           <div className="flex items-center gap-3">
             <div
-              className={`w-2.5 h-2.5 rounded-full animate-pulse ${
-                isConnected ? "bg-emerald-500" : "bg-rose-500"
+              className={`w-2.5 h-2.5 rounded-full ${
+                isConnecting
+                  ? "bg-amber-400 animate-ping"
+                  : isConnected
+                  ? "bg-emerald-500 animate-pulse"
+                  : "bg-rose-500"
               }`}
             />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-[var(--ember-text-primary)] truncate font-mono">
-                {isConnected ? `company_${companyCode}.db` : "Disconnected"}
+                {isConnecting
+                  ? "Connecting..."
+                  : isConnected
+                  ? `company_${companyCode}.db`
+                  : "Disconnected"}
               </p>
               <p className="text-[10px] text-[var(--ember-text-muted)]">
                 {isConnected ? `Active: ${activeFY}` : "System Database Locked"}
               </p>
             </div>
-            {isConnected && (
+            {isConnected ? (
               <button
                 onClick={handleDisconnect}
-                className="p-1 hover:bg-[var(--ember-surface-raised)] text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] rounded-md transition-colors"
+                className="p-1 hover:bg-[var(--ember-surface-raised)] text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] rounded-md transition-colors cursor-pointer"
                 title="Disconnect Profile"
               >
                 <XCircle className="w-4 h-4" />
+              </button>
+            ) : !isConnecting && (
+              <button
+                onClick={handleConnectDemo}
+                className="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-2 py-1 rounded transition-colors cursor-pointer"
+                title="Login to DEMO Account"
+              >
+                Demo Login
               </button>
             )}
           </div>
@@ -1029,11 +1074,29 @@ function App() {
           </div>
         </div>
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 bg-[var(--ember-surface-raised)] px-3 py-1.5 rounded-lg border border-[var(--ember-border)] text-xs text-[var(--ember-text-primary)]">
+          <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs text-[var(--ember-text-primary)] ${
+              isConnected
+                ? "bg-[var(--ember-surface-raised)] border-[var(--ember-border)]"
+                : "bg-amber-950/30 border-amber-800/50"
+            }`}>
               <Building className="w-3.5 h-3.5 text-[var(--ember-primary)]" />
-              <span>Active Profile: <strong className="text-[var(--ember-primary)] font-mono">{companyCode}</strong></span>
+              <span>
+                Active Profile: <strong className="text-[var(--ember-primary)] font-mono">{companyCode}</strong>
+                {!isConnected && !isConnecting && (
+                  <span className="ml-1.5 text-rose-400 font-normal">(Disconnected)</span>
+                )}
+              </span>
             </div>
+            {!isConnected && !isConnecting && (
+              <button
+                onClick={handleConnectDemo}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Login to DEMO
+              </button>
+            )}
             <ThemeToggle showLabel />
           </div>
         </header>
@@ -1048,14 +1111,32 @@ function App() {
           {activeTab === "dashboard" && (
 
             <div className="space-y-8">
-              {!isConnected && (
-                <div className="bg-amber-950/20 border border-amber-900/60 rounded-xl p-4 flex gap-4 text-amber-200">
-                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-bold text-sm">Database Disconnected</h4>
-                    <p className="text-xs text-amber-400/90 mt-1">
-                      Verify encryption keys and connect a company profile in settings to populate statistics and import registers.
-                    </p>
+              {!isConnected && !isConnecting && (
+                <div className="bg-amber-950/20 border border-amber-900/60 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 text-amber-200 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold text-sm text-amber-100">Database Disconnected</h4>
+                      <p className="text-xs text-amber-300/80 mt-0.5">
+                        Connect a company profile or log in to the DEMO account to populate statistics, price revisions, and invoice registers.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 self-end md:self-center">
+                    <button
+                      onClick={handleConnectDemo}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      Login to DEMO Account
+                    </button>
+                    <button
+                      onClick={() => handleConnect()}
+                      className="px-3.5 py-1.5 bg-amber-800/80 hover:bg-amber-700 text-amber-100 text-xs font-semibold rounded-lg border border-amber-600/50 transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Reconnect ({companyCode})
+                    </button>
                   </div>
                 </div>
               )}
@@ -2243,7 +2324,17 @@ function App() {
                                 </div>
                               </div>
                             </div>
-                            <div className="pt-4 border-t border-[var(--ember-border)]">
+                            <div className="pt-4 border-t border-[var(--ember-border)] space-y-2">
+                              {!isConnected && (
+                                <button
+                                  type="button"
+                                  onClick={handleConnectDemo}
+                                  className="w-full bg-emerald-700/20 hover:bg-emerald-700/40 text-emerald-300 border border-emerald-600/40 font-semibold text-xs py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                                >
+                                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                  Quick Login to DEMO Account
+                                </button>
+                              )}
                               {isConnected ? (
                                 <button
                                   onClick={handleDisconnect}
@@ -2253,7 +2344,7 @@ function App() {
                                 </button>
                               ) : (
                                 <button
-                                  onClick={handleConnect}
+                                  onClick={() => handleConnect()}
                                   className="ember-btn-primary px-5 py-2.5 text-xs cursor-pointer w-full justify-center"
                                 >
                                   Connect & Authenticate Profile
