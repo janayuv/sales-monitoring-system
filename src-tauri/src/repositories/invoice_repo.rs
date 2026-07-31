@@ -85,7 +85,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         conn.query_row(
             "SELECT invoice_number, invoice_no_long, invoice_date, customer_id, financial_year_id,
                     total_taxable, total_cgst, total_sgst, total_igst, total_cess, total_value,
-                    irn, irn_date, place_of_supply, reverse_charge, invoice_type, status, cancellation_date, import_batch_id, created_at, updated_at
+                    irn, irn_date, place_of_supply, reverse_charge, invoice_type, status, cancellation_date, import_batch_id, created_at, updated_at,
+                    COALESCE(version, 1)
              FROM invoices WHERE invoice_number = ?",
             [number],
             |row| {
@@ -111,6 +112,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     import_batch_id: row.get(18)?,
                     created_at: row.get(19)?,
                     updated_at: row.get(20)?,
+                    version: row.get(21)?,
                 })
             },
         )
@@ -237,9 +239,12 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         invoice_number: &str,
     ) -> Result<Vec<InvoiceItemRow>, AppError> {
         let mut stmt = conn.prepare(
-            "SELECT id, invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
-                    cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value
-             FROM invoice_items WHERE invoice_number = ?",
+            "SELECT ii.id, ii.invoice_number, ii.part_code, ii.quantity, ii.rate_pre_unit, ii.assessable_value,
+                    ii.cgst_rate, ii.cgst_amount, ii.sgst_rate, ii.sgst_amount, ii.igst_rate, ii.igst_amount, ii.total_value,
+                    it.part_name AS description
+             FROM invoice_items ii
+             LEFT JOIN items it ON ii.part_code = it.part_code
+             WHERE ii.invoice_number = ?",
         )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
@@ -252,6 +257,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     id: Some(row.get(0)?),
                     invoice_number: row.get(1)?,
                     part_code: row.get(2)?,
+                    description: row.get(13).ok(),
                     quantity: row.get(3)?,
                     rate_pre_unit: row.get(4)?,
                     assessable_value: row.get(5)?,

@@ -43,6 +43,7 @@ import { ImportTemplateRow } from "./types/bindings/ImportTemplateRow";
 import { InvoiceSummary } from "./types/bindings/InvoiceSummary";
 import { InvoiceRow } from "./types/bindings/InvoiceRow";
 import { OutwardRegisterTable } from "./components/OutwardRegisters/OutwardRegisterTable";
+import { InvoiceEditModal } from "./components/OutwardRegisters/components/InvoiceEditModal";
 import { InvoiceItemRow } from "./types/bindings/InvoiceItemRow";
 import { AuditLogRow } from "./types/bindings/AuditLogRow";
 import { SupplierPriceRevisionRow } from "./types/bindings/SupplierPriceRevisionRow";
@@ -138,6 +139,22 @@ function App() {
   const [selectedInvoiceAuditLogs, setSelectedInvoiceAuditLogs] = useState<AuditLogRow[]>([]);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [editingInvoiceNumber, setEditingInvoiceNumber] = useState<string | null>(null);
+
+  const handleStartEditInspector = async (invNo: string) => {
+    try {
+      await ApiService.validateInvoiceEditEligibility(invNo);
+      setIsDetailOpen(false);
+      setEditingInvoiceNumber(invNo);
+    } catch (err: any) {
+      alert(`Cannot edit invoice: ${err.message || err}`);
+    }
+  };
+
+  const handleSavedEditInspector = async () => {
+    setEditingInvoiceNumber(null);
+    await loadInvoices();
+  };
 
   // Price Revisions States
   const [revisions, setRevisions] = useState<SupplierPriceRevisionRow[]>([]);
@@ -1151,6 +1168,7 @@ function App() {
               loading={loadingInvoices}
               companyCode={companyCode}
               onOpenDetails={handleOpenDetails}
+              onRefreshData={loadInvoices}
             />
           )}
 
@@ -2705,6 +2723,12 @@ function App() {
                     </button>
 
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => handleStartEditInspector(selectedInvoice.invoice_number)}
+                        className="ember-btn-secondary px-4 py-2 text-xs flex items-center gap-1.5 cursor-pointer text-[var(--ember-primary)] font-semibold"
+                      >
+                        <Edit2 className="w-4 h-4" /> Edit Record
+                      </button>
                       {selectedInvoice.status === "Cancelled" && (
                         <button
                           onClick={handleAutoGenerateCreditNote}
@@ -2735,6 +2759,15 @@ function App() {
               ) : null}
             </div>
           </div>
+        )}
+
+        {/* Global Invoice Edit Modal */}
+        {editingInvoiceNumber && (
+          <InvoiceEditModal
+            invoiceNumber={editingInvoiceNumber}
+            onClose={() => setEditingInvoiceNumber(null)}
+            onSaved={handleSavedEditInspector}
+          />
         )}
 
         {/* Record New Revision Dialog Modal */}

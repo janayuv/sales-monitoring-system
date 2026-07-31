@@ -162,6 +162,37 @@ pub struct InvoiceRow {
     pub import_batch_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub version: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/InvoiceItemUpdatePayload.ts")]
+pub struct InvoiceItemUpdatePayload {
+    pub id: Option<i64>,
+    pub part_code: String,
+    pub description: Option<String>,
+    pub quantity: f64,
+    pub rate_pre_unit: f64,
+    pub cgst_rate: f64,
+    pub sgst_rate: f64,
+    pub igst_rate: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/InvoiceUpdatePayload.ts")]
+pub struct InvoiceUpdatePayload {
+    pub invoice_number: String,
+    pub expected_version: i32,
+    pub customer_id: i64,
+    pub place_of_supply: Option<String>,
+    pub reverse_charge: Option<String>,
+    pub invoice_type: Option<String>,
+    pub irn: Option<String>,
+    pub irn_date: Option<String>,
+    pub status: String,
+    pub edit_reason: String,
+    pub items: Vec<InvoiceItemUpdatePayload>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
@@ -170,6 +201,7 @@ pub struct InvoiceItemRow {
     pub id: Option<i64>,
     pub invoice_number: String,
     pub part_code: String,
+    pub description: Option<String>,
     pub quantity: f64,
     pub rate_pre_unit: f64,
     pub assessable_value: f64,

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useMemo, useEffect } from "react";
 import { InvoiceSummary } from "../../../types";
 import { useRegisterFilters } from "./useRegisterFilters";
 import { useRegisterSorting } from "./useRegisterSorting";
@@ -7,7 +7,7 @@ import { useRegisterSummary } from "./useRegisterSummary";
 import { useRegisterPreferences } from "./useRegisterPreferences";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { ExportService } from "../services/exportService";
-import { ContextMenuState } from "../types/register";
+import { ContextMenuState, SelectionState } from "../types/register";
 
 export function useRegisterTable(
   invoices: InvoiceSummary[],
@@ -76,7 +76,179 @@ export function useRegisterTable(
     filteredInvoices
   );
 
-  // 6. Right-Click Context Menu State
+  // 6. Selection State Management (Gmail-style)
+  const [selectionState, setSelectionState] = useState<SelectionState>({
+    type: "none",
+    selectedIds: new Set<string>(),
+    excludedIds: new Set<string>(),
+  });
+
+  const toggleSelectInvoice = (invoiceNumber: string) => {
+    setSelectionState((prev) => {
+      if (prev.type === "filtered") {
+        const newExcluded = new Set(prev.excludedIds);
+        if (newExcluded.has(invoiceNumber)) {
+          newExcluded.delete(invoiceNumber);
+        } else {
+          newExcluded.add(invoiceNumber);
+        }
+        return { ...prev, type: "filtered_except", excludedIds: newExcluded };
+      }
+      if (prev.type === "filtered_except") {
+        const newExcluded = new Set(prev.excludedIds);
+        if (newExcluded.has(invoiceNumber)) {
+          newExcluded.delete(invoiceNumber);
+        } else {
+          newExcluded.add(invoiceNumber);
+        }
+        return { ...prev, excludedIds: newExcluded };
+      }
+      const newSelected = new Set(prev.selectedIds);
+      if (newSelected.has(invoiceNumber)) {
+        newSelected.delete(invoiceNumber);
+      } else {
+        newSelected.add(invoiceNumber);
+      }
+      return {
+        type: newSelected.size === 0 ? "none" : "page",
+        selectedIds: newSelected,
+        excludedIds: new Set(),
+      };
+    });
+  };
+
+  const toggleSelectPage = (pageInvoices: InvoiceSummary[]) => {
+    const pageIds = pageInvoices
+      .filter((inv) => inv.status === "Imported" || inv.status === "Draft")
+      .map((inv) => inv.invoice_number);
+    if (pageIds.length === 0) return;
+
+    setSelectionState((prev) => {
+      const allSelected = pageIds.every((id) => prev.selectedIds.has(id));
+      const newSelected = new Set(prev.selectedIds);
+      if (allSelected) {
+        pageIds.forEach((id) => newSelected.delete(id));
+      } else {
+        pageIds.forEach((id) => newSelected.add(id));
+      }
+      return {
+        type: newSelected.size === 0 ? "none" : "page",
+        selectedIds: newSelected,
+        excludedIds: new Set(),
+      };
+    });
+  };
+
+  const selectFilteredUnverified = () => {
+    setSelectionState({
+      type: "filtered",
+      selectedIds: new Set(),
+      excludedIds: new Set(),
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectionState({
+      type: "none",
+      selectedIds: new Set(),
+      excludedIds: new Set(),
+    });
+  };
+
+  // Reconcile selection if invoices change
+  useEffect(() => {
+    if (selectionState.type === "page") {
+      const validIds = new Set(invoices.map((i) => i.invoice_number));
+      const reconciled = new Set(
+        Array.from(selectionState.selectedIds).filter((id) => validIds.has(id))
+      );
+      if (reconciled.size !== selectionState.selectedIds.size) {
+        setSelectionState((prev) => ({
+          ...prev,
+          type: reconciled.size === 0 ? "none" : "page",
+          selectedIds: reconciled,
+        }));
+      }
+    }
+  }, [invoices, filters]);
+
+  // Aggregate selected monetary totals
+  const selectedSummary = useMemo(() => {
+    if (selectionState.type === "none") {
+      return { count: 0, taxable: 0, tax: 0, total: 0 };
+    }
+    if (selectionState.type === "filtered") {
+      const unverified = filteredInvoices.filter(
+        (i) => i.status === "Imported" || i.status === "Draft"
+      );
+      return {
+        count: unverified.length,
+        taxable: unverified.reduce((acc, i) => acc + i.total_taxable, 0),
+        tax: unverified.reduce((acc, i) => acc + i.total_tax, 0),
+        total: unverified.reduce((acc, i) => acc + i.total_value, 0),
+      };
+    }
+    if (selectionState.type === "filtered_except") {
+      const unverified = filteredInvoices.filter(
+        (i) =>
+          (i.status === "Imported" || i.status === "Draft") &&
+          !selectionState.excludedIds.has(i.invoice_number)
+      );
+      return {
+        count: unverified.length,
+        taxable: unverified.reduce((acc, i) => acc + i.total_taxable, 0),
+        tax: unverified.reduce((acc, i) => acc + i.total_tax, 0),
+        total: unverified.reduce((acc, i) => acc + i.total_value, 0),
+      };
+    }
+    // "page" mode
+    const selectedInvoices = invoices.filter((i) =>
+      selectionState.selectedIds.has(i.invoice_number)
+    );
+    return {
+      count: selectedInvoices.length,
+      taxable: selectedInvoices.reduce((acc, i) => acc + i.total_taxable, 0),
+      tax: selectedInvoices.reduce((acc, i) => acc + i.total_tax, 0),
+      total: selectedInvoices.reduce((acc, i) => acc + i.total_value, 0),
+    };
+  }, [selectionState, filteredInvoices, invoices]);
+
+  // Convert SelectionState to Rust IPC SelectionModeDTO
+  const getIpcSelectionPayload = () => {
+    const filterDto = {
+      search_query: filters.searchQuery || null,
+      status_filter: filters.statusFilter === "ALL" ? null : filters.statusFilter,
+      customer_code: filters.customerFilter === "ALL" ? null : filters.customerFilter,
+      date_from: filters.dateRange.from || null,
+      date_to: filters.dateRange.to || null,
+      min_value: filters.valueRange.min,
+      max_value: filters.valueRange.max,
+    };
+
+    if (selectionState.type === "filtered") {
+      return {
+        type: "ServerResolved",
+        payload: { filter: filterDto },
+      };
+    }
+    if (selectionState.type === "filtered_except") {
+      return {
+        type: "ServerResolvedExcept",
+        payload: {
+          filter: filterDto,
+          excluded_invoice_numbers: Array.from(selectionState.excludedIds),
+        },
+      };
+    }
+    return {
+      type: "Direct",
+      payload: {
+        invoice_numbers: Array.from(selectionState.selectedIds),
+      },
+    };
+  };
+
+  // 7. Right-Click Context Menu State
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
     visible: false,
     x: 0,
@@ -101,7 +273,7 @@ export function useRegisterTable(
     setContextMenu((prev) => ({ ...prev, visible: false }));
   };
 
-  // 7. Export Handlers
+  // 8. Export Handlers
   const handleExportCsv = () => {
     ExportService.exportCSV(sortedInvoices, filters);
   };
@@ -118,7 +290,7 @@ export function useRegisterTable(
     ExportService.exportPrint(sortedInvoices, filters, companyCode);
   };
 
-  // 8. Keyboard Shortcuts
+  // 9. Keyboard Shortcuts
   useKeyboardShortcuts({
     searchInputRef,
     onExportCsv: handleExportCsv,
@@ -148,6 +320,15 @@ export function useRegisterTable(
     density: preferences.density,
     visibleColumns: preferences.visibleColumns,
     contextMenu,
+
+    // Selection & Totals
+    selectionState,
+    selectedSummary,
+    toggleSelectInvoice,
+    toggleSelectPage,
+    selectFilteredUnverified,
+    clearSelection,
+    getIpcSelectionPayload,
 
     // Totals & KPI Cards
     filteredSummary,

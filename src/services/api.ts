@@ -4,6 +4,8 @@ import { ImportTemplateRow } from "../types/bindings/ImportTemplateRow";
 import { InvoiceSummary } from "../types/bindings/InvoiceSummary";
 import { InvoiceRow } from "../types/bindings/InvoiceRow";
 import { InvoiceItemRow } from "../types/bindings/InvoiceItemRow";
+import { InvoiceUpdatePayload } from "../types/bindings/InvoiceUpdatePayload";
+import { InvoiceItemUpdatePayload } from "../types/bindings/InvoiceItemUpdatePayload";
 import { AuditLogRow } from "../types/bindings/AuditLogRow";
 import { SupplierPriceRevisionRow } from "../types/bindings/SupplierPriceRevisionRow";
 import { DebitNoteRow } from "../types/bindings/DebitNoteRow";
@@ -35,6 +37,7 @@ export type { CompanyProfileRow };
 export type { CustomerCategoryRow };
 export type { CustomerMasterRow };
 export type { CustomerImportPreview, CustomerImportResult };
+export type { InvoiceUpdatePayload, InvoiceItemUpdatePayload };
 
 export interface CustomerMasterPayload {
   id: number | null;
@@ -148,11 +151,39 @@ export class ApiService {
   }
 
   /**
+   * Validate if an invoice is eligible to be edited (pre-flight check).
+   */
+  static async validateInvoiceEditEligibility(invoiceNumber: string): Promise<void> {
+    await invoke("validate_invoice_edit_eligibility", { invoiceNumber });
+  }
+
+  /**
+   * Fully update an invoice record (header + line items) with version control and audit logging.
+   */
+  static async updateInvoiceRecord(
+    payload: InvoiceUpdatePayload,
+    userName: string = "System User"
+  ): Promise<[InvoiceRow, InvoiceItemRow[]]> {
+    return await invoke<[InvoiceRow, InvoiceItemRow[]]>("update_invoice_record", { payload, userName });
+  }
+
+  /**
    * Update the status of an invoice (e.g. Cancelled, Verified).
    */
   static async updateInvoiceStatus(invoiceNumber: string, status: string, userName: string): Promise<void> {
     await invoke("update_invoice_status", { invoiceNumber, status, userName });
   }
+
+  /**
+   * Bulk verify invoices using IPC selection mode (Direct or ServerResolved).
+   */
+  static async bulkVerifyInvoices(
+    selection: any,
+    userName: string = "System User"
+  ): Promise<any> {
+    return await invoke("bulk_verify_invoices", { selection, userName });
+  }
+
 
   /**
    * Permanently delete an invoice record and its lines, logging audit info.

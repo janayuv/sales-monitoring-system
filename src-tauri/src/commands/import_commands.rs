@@ -358,6 +358,7 @@ pub fn commit_import_batch(
             id: None,
             invoice_number: inv_no.clone(),
             part_code,
+            description: None,
             quantity: qty,
             rate_pre_unit: rate,
             assessable_value: ass_val,
@@ -400,6 +401,7 @@ pub fn commit_import_batch(
                 import_batch_id: Some(batch_id),
                 created_at: "".to_string(),
                 updated_at: "".to_string(),
+                version: 1,
             });
 
         header.total_taxable += ass_val;

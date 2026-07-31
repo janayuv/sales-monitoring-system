@@ -407,3 +407,487 @@ pub fn get_customers_list(state: State<'_, DbState>) -> Result<Vec<CustomerRow>,
     }
     Ok(list)
 }
+
+#[tauri::command]
+pub fn bulk_verify_invoices(
+    state: State<'_, DbState>,
+    selection: crate::models::bulk_action_dto::SelectionModeDTO,
+    user_name: Option<String>,
+) -> Result<crate::models::bulk_action::BulkActionResult, AppError> {
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let effective_user = user_name.unwrap_or_else(|| "System User".to_string());
+    crate::services::bulk_action_service::BulkActionService::execute_bulk_verify(
+        conn,
+        &selection,
+        &effective_user,
+    )
+}
+
+#[tauri::command]
+pub fn validate_invoice_edit_eligibility(
+    state: State<'_, DbState>,
+    invoice_number: String,
+) -> Result<(), AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let repo = SqliteInvoiceRepository;
+    let inv = repo
+        .find_invoice(conn, &invoice_number)?
+        .ok_or_else(|| AppError::Validation {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Invoice not found: {}", invoice_number),
+        })?;
+
+    // Check financial year lock
+    let is_locked: i32 = conn
+        .query_row(
+            "SELECT is_locked FROM financial_years WHERE id = ?",
+            [inv.financial_year_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if is_locked == 1 {
+        return Err(AppError::Validation {
+            code: "ERR_FY_LOCKED".to_string(),
+            message: "Cannot edit invoice in a locked financial year or closed period.".to_string(),
+        });
+    }
+
+    // Check status eligibility
+    if inv.status == "Cancelled" || inv.status == "Closed" {
+        return Err(AppError::Validation {
+            code: "ERR_INVOICE_STATUS".to_string(),
+            message: format!("Invoice with status '{}' cannot be edited.", inv.status),
+        });
+    }
+
+    // Check references in credit_notes or customer_debit_note_invoice_map
+    let cn_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM credit_notes WHERE invoice_number = ? AND is_deleted = 0",
+            [&invoice_number],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if cn_count > 0 {
+        return Err(AppError::Validation {
+            code: "ERR_INVOICE_REFERENCED".to_string(),
+            message: "Invoice is referenced by an active Credit Note and cannot be edited.".to_string(),
+        });
+    }
+
+    let dn_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM customer_debit_note_invoice_map WHERE invoice_number = ?",
+            [&invoice_number],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if dn_count > 0 {
+        return Err(AppError::Validation {
+            code: "ERR_INVOICE_REFERENCED".to_string(),
+            message: "Invoice is referenced by an active Debit Note and cannot be edited.".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_invoice_record(
+    state: State<'_, DbState>,
+    payload: crate::models::database_models::InvoiceUpdatePayload,
+    user_name: String,
+) -> Result<(InvoiceRow, Vec<InvoiceItemRow>), AppError> {
+    log::info!("Updating invoice record: {}", payload.invoice_number);
+
+    let trimmed_reason = payload.edit_reason.trim();
+    if trimmed_reason.is_empty() {
+        return Err(AppError::Validation {
+            code: "ERR_VALIDATION_001".to_string(),
+            message: "A mandatory modification reason / justification is required.".to_string(),
+        });
+    }
+
+    let mut conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    // 1. Transaction Phase
+    let tx = conn.transaction().map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to begin transaction: {}", e),
+    })?;
+
+    let repo = SqliteInvoiceRepository;
+    let old_invoice = repo
+        .find_invoice(&tx, &payload.invoice_number)?
+        .ok_or_else(|| AppError::Validation {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Invoice not found: {}", payload.invoice_number),
+        })?;
+
+    // Optimistic Concurrency Check
+    if old_invoice.version != payload.expected_version {
+        return Err(AppError::Validation {
+            code: "ERR_CONCURRENCY_CONFLICT".to_string(),
+            message: "Invoice was modified by another user. Please reload and try again.".to_string(),
+        });
+    }
+
+    // Financial Year Lock Check
+    let is_locked: i32 = tx
+        .query_row(
+            "SELECT is_locked FROM financial_years WHERE id = ?",
+            [old_invoice.financial_year_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if is_locked == 1 {
+        return Err(AppError::Validation {
+            code: "ERR_FY_LOCKED".to_string(),
+            message: "Cannot modify invoices in a locked financial year".to_string(),
+        });
+    }
+
+    // Master Reference Check: Customer
+    let cust_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM customers WHERE id = ?",
+            [payload.customer_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if cust_count == 0 {
+        return Err(AppError::Validation {
+            code: "ERR_VALIDATION_002".to_string(),
+            message: format!("Selected Customer ID ({}) does not exist in master records.", payload.customer_id),
+        });
+    }
+
+    // Reference Check: Credit / Debit Notes
+    let cn_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM credit_notes WHERE invoice_number = ? AND is_deleted = 0",
+            [&payload.invoice_number],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if cn_count > 0 {
+        return Err(AppError::Validation {
+            code: "ERR_INVOICE_REFERENCED".to_string(),
+            message: "Invoice is referenced by an active Credit Note and cannot be edited.".to_string(),
+        });
+    }
+
+    let old_items = repo.get_invoice_items(&tx, &payload.invoice_number)?;
+
+    // Line item validations & calculation
+    if payload.items.is_empty() {
+        return Err(AppError::Validation {
+            code: "ERR_VALIDATION_003".to_string(),
+            message: "Invoice must contain at least one line item.".to_string(),
+        });
+    }
+
+    let mut calc_taxable = 0.0;
+    let mut calc_cgst = 0.0;
+    let mut calc_sgst = 0.0;
+    let mut calc_igst = 0.0;
+
+    struct ProcessedItem {
+        id: Option<i64>,
+        part_code: String,
+        quantity: f64,
+        rate_pre_unit: f64,
+        assessable_value: f64,
+        cgst_rate: f64,
+        cgst_amount: f64,
+        sgst_rate: f64,
+        sgst_amount: f64,
+        igst_rate: f64,
+        igst_amount: f64,
+        total_value: f64,
+    }
+
+    let mut processed_items = Vec::new();
+
+    for (idx, item) in payload.items.iter().enumerate() {
+        if item.part_code.trim().is_empty() {
+            return Err(AppError::Validation {
+                code: "ERR_VALIDATION_004".to_string(),
+                message: format!("Line item #{}: Part code is required.", idx + 1),
+            });
+        }
+        if item.quantity <= 0.0 {
+            return Err(AppError::Validation {
+                code: "ERR_VALIDATION_005".to_string(),
+                message: format!("Line item #{} ({}): Quantity must be greater than 0.", idx + 1, item.part_code),
+            });
+        }
+        if item.rate_pre_unit < 0.0 {
+            return Err(AppError::Validation {
+                code: "ERR_VALIDATION_006".to_string(),
+                message: format!("Line item #{} ({}): Rate per unit cannot be negative.", idx + 1, item.part_code),
+            });
+        }
+
+        // Tax Exclusivity Check
+        let has_intra = item.cgst_rate > 0.0 || item.sgst_rate > 0.0;
+        let has_inter = item.igst_rate > 0.0;
+        if has_intra && has_inter {
+            return Err(AppError::Validation {
+                code: "ERR_TAX_INVALID".to_string(),
+                message: format!(
+                    "Line item #{} ({}): Cannot apply both CGST/SGST and IGST taxes on the same line item.",
+                    idx + 1, item.part_code
+                ),
+            });
+        }
+
+        let assessable = (item.quantity * item.rate_pre_unit * 100.0).round() / 100.0;
+        let cgst = (assessable * item.cgst_rate).round() / 100.0;
+        let sgst = (assessable * item.sgst_rate).round() / 100.0;
+        let igst = (assessable * item.igst_rate).round() / 100.0;
+        let line_total = assessable + cgst + sgst + igst;
+
+        calc_taxable += assessable;
+        calc_cgst += cgst;
+        calc_sgst += sgst;
+        calc_igst += igst;
+
+        processed_items.push(ProcessedItem {
+            id: item.id,
+            part_code: item.part_code.trim().to_string(),
+            quantity: item.quantity,
+            rate_pre_unit: item.rate_pre_unit,
+            assessable_value: assessable,
+            cgst_rate: item.cgst_rate,
+            cgst_amount: cgst,
+            sgst_rate: item.sgst_rate,
+            sgst_amount: sgst,
+            igst_rate: item.igst_rate,
+            igst_amount: igst,
+            total_value: line_total,
+        });
+    }
+
+    let calc_total_value = calc_taxable + calc_cgst + calc_sgst + calc_igst;
+
+    // Update Header with Version Increment
+    let rows_updated = tx.execute(
+        "UPDATE invoices
+         SET customer_id = ?,
+             place_of_supply = ?,
+             reverse_charge = ?,
+             invoice_type = ?,
+             irn = ?,
+             irn_date = ?,
+             status = ?,
+             total_taxable = ?,
+             total_cgst = ?,
+             total_sgst = ?,
+             total_igst = ?,
+             total_value = ?,
+             updated_at = datetime('now'),
+             version = version + 1
+         WHERE invoice_number = ? AND version = ?",
+        params![
+            payload.customer_id,
+            payload.place_of_supply,
+            payload.reverse_charge.unwrap_or_else(|| "N".to_string()),
+            payload.invoice_type.unwrap_or_else(|| "Regular B2B".to_string()),
+            payload.irn,
+            payload.irn_date,
+            payload.status,
+            calc_taxable,
+            calc_cgst,
+            calc_sgst,
+            calc_igst,
+            calc_total_value,
+            payload.invoice_number,
+            payload.expected_version,
+        ],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to update invoice header: {}", e),
+    })?;
+
+    if rows_updated == 0 {
+        return Err(AppError::Validation {
+            code: "ERR_CONCURRENCY_CONFLICT".to_string(),
+            message: "Invoice version conflict: The invoice was updated by another user or session.".to_string(),
+        });
+    }
+
+    // Differential Line Items Update
+    let payload_ids: Vec<i64> = processed_items.iter().filter_map(|pi| pi.id).collect();
+
+    // 1. Delete removed items
+    if payload_ids.is_empty() {
+        tx.execute(
+            "DELETE FROM invoice_items WHERE invoice_number = ?",
+            [&payload.invoice_number],
+        ).map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to clear items: {}", e),
+        })?;
+    } else {
+        let query = format!(
+            "DELETE FROM invoice_items WHERE invoice_number = ? AND id NOT IN ({})",
+            payload_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",")
+        );
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+        params_vec.push(payload.invoice_number.clone().into());
+        for id in &payload_ids {
+            params_vec.push((*id).into());
+        }
+        tx.execute(&query, rusqlite::params_from_iter(params_vec))
+            .map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to delete removed items: {}", e),
+            })?;
+    }
+
+    // 2. Update existing / Insert new items
+    for item in &processed_items {
+        if let Some(item_id) = item.id {
+            tx.execute(
+                "UPDATE invoice_items
+                 SET part_code = ?, quantity = ?, rate_pre_unit = ?, assessable_value = ?,
+                     cgst_rate = ?, cgst_amount = ?, sgst_rate = ?, sgst_amount = ?,
+                     igst_rate = ?, igst_amount = ?, total_value = ?
+                 WHERE id = ? AND invoice_number = ?",
+                params![
+                    item.part_code,
+                    item.quantity,
+                    item.rate_pre_unit,
+                    item.assessable_value,
+                    item.cgst_rate,
+                    item.cgst_amount,
+                    item.sgst_rate,
+                    item.sgst_amount,
+                    item.igst_rate,
+                    item.igst_amount,
+                    item.total_value,
+                    item_id,
+                    payload.invoice_number,
+                ],
+            )
+            .map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to update invoice item #{}: {}", item_id, e),
+            })?;
+        } else {
+            tx.execute(
+                "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
+                                            cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    payload.invoice_number,
+                    item.part_code,
+                    item.quantity,
+                    item.rate_pre_unit,
+                    item.assessable_value,
+                    item.cgst_rate,
+                    item.cgst_amount,
+                    item.sgst_rate,
+                    item.sgst_amount,
+                    item.igst_rate,
+                    item.igst_amount,
+                    item.total_value,
+                ],
+            )
+            .map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to insert new invoice item: {}", e),
+            })?;
+        }
+    }
+
+    // Build Audit Trail Summary
+    let old_val_json = serde_json::to_string(&serde_json::json!({
+        "header": old_invoice,
+        "items": old_items
+    })).unwrap_or_default();
+
+    let new_invoice = repo.find_invoice(&tx, &payload.invoice_number)?.unwrap();
+    let new_items = repo.get_invoice_items(&tx, &payload.invoice_number)?;
+
+    let new_val_json = serde_json::to_string(&serde_json::json!({
+        "header": new_invoice,
+        "items": new_items
+    })).unwrap_or_default();
+
+    let audit_action = format!(
+        "Invoice #{} updated by {}. Reason: {}. Customer ID: {} -> {}. Status: {} -> {}. Items count: {} -> {}.",
+        payload.invoice_number,
+        user_name,
+        trimmed_reason,
+        old_invoice.customer_id,
+        new_invoice.customer_id,
+        old_invoice.status,
+        new_invoice.status,
+        old_items.len(),
+        new_items.len()
+    );
+
+    tx.execute(
+        "INSERT INTO audit_log (user_action, table_name, record_id, old_value, new_value)
+         VALUES (?, 'invoices', ?, ?, ?)",
+        params![audit_action, payload.invoice_number, old_val_json, new_val_json],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to log edit audit: {}", e),
+    })?;
+
+    tx.commit().map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to commit edit transaction: {}", e),
+    })?;
+
+    // 2. Post-Commit Phase: Refreshes & Cache Invalidation
+    let conn_guard_read = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to re-acquire lock: {}", e)))?;
+    if let Some(ref conn_ref) = *conn_guard_read {
+        let report_repo = SqliteReportRepository;
+        let _ = report_repo.refresh_monthly_summary(conn_ref, new_invoice.financial_year_id);
+        let _ = report_repo.refresh_customer_summary(conn_ref, new_invoice.financial_year_id);
+        let _ = report_repo.refresh_supplier_summary(conn_ref, new_invoice.financial_year_id);
+    }
+
+    if let Ok(mut cache) = state.dashboard_cache.lock() {
+        *cache = None;
+    }
+
+    Ok((new_invoice, new_items))
+}
+

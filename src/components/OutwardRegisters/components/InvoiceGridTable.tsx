@@ -1,10 +1,10 @@
-import React from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { InvoiceSummary } from "../../../types";
-import { SortConfig, TableDensity } from "../types/register";
+import { SortConfig, TableDensity, SelectionState } from "../types/register";
 import { REGISTER_COLUMNS } from "../constants/columns";
 import { STATUS_STYLES } from "../constants/statusColors";
 import { formatINR } from "../utils/formatCurrency";
-import { ArrowUp, ArrowDown, ArrowUpDown, Eye } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Eye, Edit2, ChevronDown, Check } from "lucide-react";
 
 interface Props {
   invoices: InvoiceSummary[];
@@ -12,9 +12,15 @@ interface Props {
   visibleColumns: string[];
   density: TableDensity;
   sortConfig: SortConfig;
+  selectionState: SelectionState;
   onSort: (col: keyof InvoiceSummary) => void;
   onOpenDetails: (invoiceNumber: string) => void;
+  onEditInvoice?: (invoiceNumber: string) => void;
   onContextMenu: (e: React.MouseEvent, invoice: InvoiceSummary) => void;
+  onToggleSelectInvoice: (invoiceNumber: string) => void;
+  onToggleSelectPage: (invoices: InvoiceSummary[]) => void;
+  onSelectFilteredUnverified: () => void;
+  onClearSelection: () => void;
 }
 
 export const InvoiceGridTable: React.FC<Props> = ({
@@ -23,13 +29,48 @@ export const InvoiceGridTable: React.FC<Props> = ({
   visibleColumns,
   density,
   sortConfig,
+  selectionState,
   onSort,
   onOpenDetails,
+  onEditInvoice,
   onContextMenu,
+  onToggleSelectInvoice,
+  onToggleSelectPage,
+  onSelectFilteredUnverified,
+  onClearSelection,
 }) => {
-  const isColVisible = (id: string) => visibleColumns.includes(id);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const isColVisible = (id: string) => visibleColumns.includes(id);
   const rowPaddingClass = density === "compact" ? "py-2 px-3" : "py-3.5 px-4";
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Determine header checkbox state
+  const verifiableOnPage = invoices.filter(
+    (i) => i.status === "Imported" || i.status === "Draft"
+  );
+  const isPageAllSelected =
+    verifiableOnPage.length > 0 &&
+    verifiableOnPage.every((i) => isInvoiceSelected(i.invoice_number));
+
+  function isInvoiceSelected(invNo: string): boolean {
+    if (selectionState.type === "filtered") return true;
+    if (selectionState.type === "filtered_except") {
+      return !selectionState.excludedIds.has(invNo);
+    }
+    return selectionState.selectedIds.has(invNo);
+  }
 
   return (
     <div className="ember-card overflow-hidden relative flex-1 flex flex-col">
@@ -38,9 +79,67 @@ export const InvoiceGridTable: React.FC<Props> = ({
           {/* Sticky Table Header */}
           <thead className="sticky top-0 z-10 bg-[var(--ember-surface-raised)] border-b border-[var(--ember-border)] shadow-sm">
             <tr className="text-[var(--ember-text-secondary)] font-bold select-none uppercase tracking-wider text-[11px]">
+              {/* Checkbox Column Header */}
+              <th className={`${rowPaddingClass} w-10 text-center sticky left-0 bg-[var(--ember-surface-raised)] z-20`}>
+                <div className="flex items-center justify-center gap-1 relative" ref={dropdownRef}>
+                  <input
+                    type="checkbox"
+                    checked={isPageAllSelected || selectionState.type === "filtered"}
+                    onChange={() => onToggleSelectPage(invoices)}
+                    className="w-4 h-4 rounded border-[var(--ember-border)] bg-[var(--ember-surface)] text-emerald-500 focus:ring-emerald-500/30 cursor-pointer accent-emerald-500"
+                    title="Select/Deselect page unverified invoices"
+                  />
+                  <button
+                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    className="p-0.5 text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] rounded cursor-pointer"
+                    title="Selection menu"
+                  >
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+
+                  {/* Gmail Style Selection Dropdown */}
+                  {isDropdownOpen && (
+                    <div className="absolute top-full left-0 mt-1 w-48 rounded-xl border border-[var(--ember-border)] bg-[var(--ember-surface)] shadow-2xl p-1 text-left z-30 font-sans normal-case tracking-normal">
+                      <button
+                        onClick={() => {
+                          onToggleSelectPage(invoices);
+                          setIsDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-[var(--ember-surface-raised)] flex items-center justify-between text-xs text-[var(--ember-text-primary)] font-medium"
+                      >
+                        <span>Select Page ({verifiableOnPage.length})</span>
+                        {isPageAllSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          onSelectFilteredUnverified();
+                          setIsDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-[var(--ember-surface-raised)] flex items-center justify-between text-xs text-emerald-400 font-medium"
+                      >
+                        <span>Select All Unverified</span>
+                        {selectionState.type === "filtered" && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                      </button>
+
+                      <div className="my-1 border-t border-[var(--ember-border-subtle)]" />
+
+                      <button
+                        onClick={() => {
+                          onClearSelection();
+                          setIsDropdownOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-[var(--ember-surface-raised)] text-xs text-rose-400 font-medium"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </th>
+
               {REGISTER_COLUMNS.map((col) => {
                 if (!isColVisible(col.id)) return null;
-
                 const isSortedColumn = sortConfig.column === col.id;
                 const isSortable = col.sortable;
 
@@ -60,7 +159,7 @@ export const InvoiceGridTable: React.FC<Props> = ({
                         : "text-left"
                     } ${
                       isSortable ? "cursor-pointer hover:bg-[var(--ember-surface)] transition-colors" : ""
-                    } ${col.pinned ? "sticky left-0 bg-[var(--ember-surface-raised)] z-20" : ""}`}
+                    }`}
                   >
                     <div
                       className={`inline-flex items-center gap-1.5 ${
@@ -90,14 +189,16 @@ export const InvoiceGridTable: React.FC<Props> = ({
 
           <tbody className="divide-y divide-[var(--ember-border-subtle)] font-sans">
             {loading ? (
-              // Skeleton Loading Shimmer Rows
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={i} className="animate-pulse">
+                  <td className={`${rowPaddingClass} text-center`}>
+                    <div className="h-4 w-4 bg-[var(--ember-surface-raised)] rounded mx-auto" />
+                  </td>
                   {REGISTER_COLUMNS.map((col) => {
                     if (!isColVisible(col.id)) return null;
                     return (
                       <td key={col.id} className={rowPaddingClass}>
-                        <div className="h-4 bg-[var(--ember-surface-raised)] rounded w-3/4 animate-pulse" />
+                        <div className="h-4 bg-[var(--ember-surface-raised)] rounded w-3/4" />
                       </td>
                     );
                   })}
@@ -106,7 +207,7 @@ export const InvoiceGridTable: React.FC<Props> = ({
             ) : invoices.length === 0 ? (
               <tr>
                 <td
-                  colSpan={visibleColumns.length}
+                  colSpan={visibleColumns.length + 1}
                   className="p-16 text-center text-[var(--ember-text-muted)]"
                 >
                   <div className="max-w-xs mx-auto">
@@ -122,14 +223,39 @@ export const InvoiceGridTable: React.FC<Props> = ({
             ) : (
               invoices.map((inv) => {
                 const statusStyle = STATUS_STYLES[inv.status as keyof typeof STATUS_STYLES] || STATUS_STYLES.ALL;
+                const isSelected = isInvoiceSelected(inv.invoice_number);
+                const isSelectable = inv.status === "Imported" || inv.status === "Draft";
 
                 return (
                   <tr
                     key={inv.invoice_number}
                     onDoubleClick={() => onOpenDetails(inv.invoice_number)}
                     onContextMenu={(e) => onContextMenu(e, inv)}
-                    className="hover:bg-[var(--ember-surface-raised)]/80 transition-colors cursor-pointer select-none group"
+                    className={`transition-colors cursor-pointer select-none group ${
+                      isSelected
+                        ? "bg-emerald-950/20 hover:bg-emerald-900/30"
+                        : "hover:bg-[var(--ember-surface-raised)]/80"
+                    }`}
                   >
+                    {/* Row Selection Checkbox */}
+                    <td
+                      className={`${rowPaddingClass} text-center`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={!isSelectable}
+                        onChange={() => onToggleSelectInvoice(inv.invoice_number)}
+                        className="w-4 h-4 rounded border-[var(--ember-border)] bg-[var(--ember-surface)] text-emerald-500 focus:ring-emerald-500/30 cursor-pointer accent-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={
+                          isSelectable
+                            ? `Select invoice ${inv.invoice_number}`
+                            : `Protected status (${inv.status}) cannot be bulk verified`
+                        }
+                      />
+                    </td>
+
                     {/* Invoice Number */}
                     {isColVisible("invoice_number") && (
                       <td className={`${rowPaddingClass} font-mono font-bold text-[var(--ember-primary)]`}>
@@ -190,13 +316,30 @@ export const InvoiceGridTable: React.FC<Props> = ({
                     {/* Actions Button */}
                     {isColVisible("actions") && (
                       <td className={`${rowPaddingClass} text-center`}>
-                        <button
-                          onClick={() => onOpenDetails(inv.invoice_number)}
-                          className="px-2 py-1 hover:bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] hover:text-[var(--ember-primary)] rounded-md transition-colors inline-flex items-center gap-1 font-medium text-[11px] border border-transparent hover:border-[var(--ember-border)]"
-                          title="Inspect Invoice Details"
-                        >
-                          <Eye className="w-3.5 h-3.5" /> inspect
-                        </button>
+                        <div className="inline-flex items-center gap-1 justify-center">
+                          {onEditInvoice && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditInvoice(inv.invoice_number);
+                              }}
+                              className="px-2 py-1 hover:bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-md transition-colors inline-flex items-center gap-1 font-medium text-[11px] border border-transparent hover:border-[var(--ember-border)] cursor-pointer"
+                              title="Edit Invoice Fields & Line Items"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" /> edit
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenDetails(inv.invoice_number);
+                            }}
+                            className="px-2 py-1 hover:bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] hover:text-[var(--ember-primary)] rounded-md transition-colors inline-flex items-center gap-1 font-medium text-[11px] border border-transparent hover:border-[var(--ember-border)] cursor-pointer"
+                            title="Inspect Invoice Details"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> inspect
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>

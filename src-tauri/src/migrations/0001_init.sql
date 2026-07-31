@@ -156,6 +156,9 @@ CREATE TABLE IF NOT EXISTS invoices (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_invoices_perf ON invoices(financial_year_id, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+CREATE INDEX IF NOT EXISTS idx_invoices_cust ON invoices(customer_code);
+
 
 CREATE TABLE IF NOT EXISTS invoice_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

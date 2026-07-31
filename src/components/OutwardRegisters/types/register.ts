@@ -78,3 +78,36 @@ export interface ContextMenuState {
   y: number;
   invoice: InvoiceSummary | null;
 }
+
+export type SelectionType = "none" | "page" | "filtered" | "filtered_except";
+
+export interface SelectionState {
+  type: SelectionType;
+  selectedIds: Set<string>;
+  excludedIds: Set<string>;
+}
+
+export interface SkippedInvoiceInfo {
+  invoice_number: string;
+  reason: "AlreadyVerified" | "InvalidTransition" | "ProtectedStatus";
+}
+
+export interface FailedInvoiceInfo {
+  invoice_number: string;
+  reason: "FinancialYearLocked" | "PermissionDenied" | "DatabaseLocked" | "ValidationFailed" | "UnexpectedError";
+  message: string;
+}
+
+export interface BulkActionResult {
+  batch_id: string;
+  updated: number;
+  skipped: number;
+  failed: number;
+  skipped_invoices: SkippedInvoiceInfo[];
+  failed_invoices: FailedInvoiceInfo[];
+  execution_time_ms: number;
+  db_time_ms: number;
+  audit_time_ms: number;
+  cache_time_ms: number;
+}
+

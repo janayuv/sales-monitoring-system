@@ -541,6 +541,12 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 CREATE INDEX IF NOT EXISTS idx_cn_date ON credit_notes(credit_note_date);
             ",
         },
+        Migration {
+            version: 10,
+            description: "Add version column to invoices for optimistic concurrency control",
+            rebuild: false,
+            sql: "ALTER TABLE invoices ADD COLUMN version INTEGER NOT NULL DEFAULT 1;",
+        },
     ];
 
     // 4. Apply migrations sequentially
