@@ -12,7 +12,6 @@ import {
   TrendingUp,
   XCircle,
   Building,
-  Search,
   Eye,
   FileText,
   FileJson,
@@ -43,6 +42,7 @@ import { ImportPreview } from "./types/bindings/ImportPreview";
 import { ImportTemplateRow } from "./types/bindings/ImportTemplateRow";
 import { InvoiceSummary } from "./types/bindings/InvoiceSummary";
 import { InvoiceRow } from "./types/bindings/InvoiceRow";
+import { OutwardRegisterTable } from "./components/OutwardRegisters/OutwardRegisterTable";
 import { InvoiceItemRow } from "./types/bindings/InvoiceItemRow";
 import { AuditLogRow } from "./types/bindings/AuditLogRow";
 import { SupplierPriceRevisionRow } from "./types/bindings/SupplierPriceRevisionRow";
@@ -126,10 +126,6 @@ function App() {
   // Registers States
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
-  const [cursorHistory, setCursorHistory] = useState<Array<{ date: string; no: string }>>([]);
-  const [currentPageIndex, setCurrentPageIndex] = useState(0);
 
   // Invoice Details Drawer States
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceRow | null>(null);
@@ -786,28 +782,6 @@ function App() {
     }
   };
 
-  const handleNextPage = () => {
-    if (invoices.length < 12) return;
-    const lastItem = invoices[invoices.length - 1];
-    const newCursor = { date: lastItem.invoice_date, no: lastItem.invoice_number };
-    
-    setCursorHistory([...cursorHistory, newCursor]);
-    setCurrentPageIndex(currentPageIndex + 1);
-    loadInvoices(newCursor.date, newCursor.no);
-  };
-
-  const handlePrevPage = () => {
-    if (currentPageIndex === 0) return;
-    const prevHistory = [...cursorHistory];
-    prevHistory.pop();
-    
-    const prevCursor = prevHistory[prevHistory.length - 1] || null;
-    
-    setCursorHistory(prevHistory);
-    setCurrentPageIndex(currentPageIndex - 1);
-    loadInvoices(prevCursor?.date || null, prevCursor?.no || null);
-  };
-
   // Details Inspector
   const handleOpenDetails = async (invoiceNumber: string) => {
     setLoadingDetails(true);
@@ -925,16 +899,6 @@ function App() {
       setStatusMessage(err.message || err.toString());
     }
   };
-
-  const filteredInvoices = invoices.filter((inv) => {
-    const matchesSearch =
-      inv.invoice_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.customer_code.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus =
-      statusFilter === "ALL" || inv.status.toUpperCase() === statusFilter.toUpperCase();
-    return matchesSearch && matchesStatus;
-  });
 
   return (
     <div className="flex h-screen bg-[var(--ember-bg)] text-[var(--ember-text-primary)] font-sans overflow-hidden transition-colors duration-200">
@@ -1101,143 +1065,12 @@ function App() {
           )}
 
           {activeTab === "registers" && (
-            <div className="space-y-6">
-              {/* Toolbar */}
-              <div className="flex items-center justify-between gap-4 ember-card p-4">
-                <div className="flex items-center gap-3 flex-1 max-w-md">
-                  <div className="relative w-full">
-                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-[var(--ember-text-muted)]" />
-                    <input
-                      type="text"
-                      placeholder="Search by Invoice No, Customer Code or Name..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full ember-input pl-9 pr-4 py-2 text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-1 bg-[var(--ember-surface-raised)] border border-[var(--ember-border)] p-1 rounded-lg text-xs">
-                  {["ALL", "Imported", "Verified", "Draft", "Cancelled"].map((status) => (
-                    <button
-                      key={status}
-                      onClick={() => setStatusFilter(status)}
-                      className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
-                        statusFilter === status
-                          ? "bg-[var(--ember-primary)] text-white font-semibold shadow-sm"
-                          : "text-[var(--ember-text-secondary)] hover:text-[var(--ember-text-primary)]"
-                      }`}
-                    >
-                      {status}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Table Register Grid */}
-              <div className="ember-card overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)] select-none">
-                        <th className="p-4">Invoice No</th>
-                        <th className="p-4">Invoice Date</th>
-                        <th className="p-4">Customer Details</th>
-                        <th className="p-4 text-right">Taxable (₹)</th>
-                        <th className="p-4 text-right">Tax (₹)</th>
-                        <th className="p-4 text-right">Total Value (₹)</th>
-                        <th className="p-4 text-center">Status</th>
-                        <th className="p-4 text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[var(--ember-border-subtle)]">
-                      {loadingInvoices ? (
-                        <tr>
-                          <td colSpan={8} className="p-12 text-center text-[var(--ember-text-muted)]">
-                            <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-[var(--ember-primary)]" />
-                            Loading registers database...
-                          </td>
-                        </tr>
-                      ) : filteredInvoices.length === 0 ? (
-                        <tr>
-                          <td colSpan={8} className="p-12 text-center text-[var(--ember-text-muted)]">
-                            No invoices matched filter criteria.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredInvoices.map((inv) => (
-                          <tr
-                            key={inv.invoice_number}
-                            onDoubleClick={() => handleOpenDetails(inv.invoice_number)}
-                            className="hover:bg-[var(--ember-surface-raised)] transition-colors cursor-pointer select-none"
-                          >
-                            <td className="p-4 font-mono font-bold text-[var(--ember-primary)]">{inv.invoice_number}</td>
-                            <td className="p-4 font-medium text-[var(--ember-text-secondary)]">{inv.invoice_date}</td>
-                            <td className="p-4">
-                              <div className="font-semibold text-[var(--ember-text-primary)]">{inv.customer_name}</div>
-                              <div className="text-[10px] text-[var(--ember-text-muted)] mt-0.5 font-mono">{inv.customer_code}</div>
-                            </td>
-                            <td className="p-4 text-right font-mono font-medium text-[var(--ember-text-primary)]">
-                              {inv.total_taxable.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="p-4 text-right font-mono text-[var(--ember-text-secondary)]">
-                              {inv.total_tax.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="p-4 text-right font-mono font-bold text-[var(--ember-primary)]">
-                              {inv.total_value.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="p-4 text-center">
-                              <span
-                                className={`px-2.5 py-1 ember-chip ${
-                                  inv.status === "Verified"
-                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
-                                    : inv.status === "Cancelled"
-                                    ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30"
-                                    : inv.status === "Draft"
-                                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
-                                    : "bg-orange-500/15 text-[var(--ember-primary)] border border-orange-500/30"
-                                }`}
-                              >
-                                {inv.status}
-                              </span>
-                            </td>
-                            <td className="p-4 text-center">
-                              <button
-                                onClick={() => handleOpenDetails(inv.invoice_number)}
-                                className="p-1.5 hover:bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] hover:text-[var(--ember-primary)] rounded-md transition-colors inline-flex items-center gap-1 font-medium"
-                              >
-                                <Eye className="w-3.5 h-3.5" /> inspect
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination */}
-                <div className="bg-[var(--ember-surface-raised)] p-4 border-t border-[var(--ember-border)] flex justify-between items-center text-xs">
-                  <span className="text-[var(--ember-text-muted)] font-mono">Page {currentPageIndex + 1}</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handlePrevPage}
-                      disabled={currentPageIndex === 0}
-                      className="ember-btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
-                    >
-                      Prev
-                    </button>
-                    <button
-                      onClick={handleNextPage}
-                      disabled={invoices.length < 12}
-                      className="ember-btn-secondary px-3 py-1.5 text-xs disabled:opacity-40"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <OutwardRegisterTable
+              invoices={invoices}
+              loading={loadingInvoices}
+              companyCode={companyCode}
+              onOpenDetails={handleOpenDetails}
+            />
           )}
 
           {activeTab === "customer_matching" && <CustomerMasterTab />}
