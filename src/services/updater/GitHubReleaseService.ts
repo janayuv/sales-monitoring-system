@@ -23,8 +23,31 @@ export class GitHubReleaseService implements IUpdateProvider {
       const configuredBase = `https://github.com/${this.repoOwner}/${this.repoName}/releases/latest/download/latest.json`;
       const url = getEndpointForChannel(configuredBase, channel);
 
-      const response = await fetch(url, { cache: "no-cache" });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      let response: Response;
+      try {
+        response = await fetch(url, { cache: "no-cache", signal: controller.signal });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
       if (!response.ok) {
+        if (response.status === 404) {
+          return {
+            success: false,
+            error: "ManifestInvalid",
+            message: `Update manifest not found (HTTP 404). Ensure release assets are published and repository visibility allows downloads.`,
+          };
+        }
+        if (response.status === 403 || response.status === 429) {
+          return {
+            success: false,
+            error: "Timeout",
+            message: `Server rate limit reached (HTTP ${response.status}). Please try again later.`,
+          };
+        }
         return {
           success: false,
           error: "ManifestInvalid",
@@ -39,7 +62,7 @@ export class GitHubReleaseService implements IUpdateProvider {
         return {
           success: false,
           error: "ManifestInvalid",
-          message: "The manifest is missing required properties (version or platforms).",
+          message: "The update manifest is missing required fields (version or platforms).",
         };
       }
 
@@ -56,11 +79,14 @@ export class GitHubReleaseService implements IUpdateProvider {
       return { success: true, data: data as UpdateManifest };
     } catch (e) {
       const isOffline = !navigator.onLine;
+      const isAbort = e instanceof DOMException && e.name === "AbortError";
       return {
         success: false,
         error: isOffline ? "Offline" : "Timeout",
         message: isOffline
-          ? "Network offline, unable to contact update server."
+          ? "Network is offline. Unable to contact update server."
+          : isAbort
+          ? "Server connection timed out while checking for updates."
           : e instanceof Error ? e.message : String(e),
       };
     }

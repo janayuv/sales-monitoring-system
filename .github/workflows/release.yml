@@ -60,12 +60,24 @@ jobs:
           
           echo "Channel resolved: $CHANNEL -> Manifest file: $MANIFEST_FILE"
           
-          # 2. Extract signature content
-          SIG_FILE=$(find src-tauri/target/release/bundle/ -name "*.sig" | head -n 1)
-          if [ -z "$SIG_FILE" ]; then
-            echo "Error: Signature file (*.sig) not found in build bundle output."
+          # 2. Strict NSIS executable & signature verification
+          NSIS_DIR="src-tauri/target/release/bundle/nsis"
+          EXE_COUNT=$(find "$NSIS_DIR" -name "*.exe" 2>/dev/null | wc -l)
+          SIG_COUNT=$(find "$NSIS_DIR" -name "*.exe.sig" 2>/dev/null | wc -l)
+          
+          echo "Found $EXE_COUNT NSIS installer executable(s) and $SIG_COUNT NSIS signature file(s)."
+          
+          if [ "$EXE_COUNT" -ne 1 ]; then
+            echo "Error: Expected exactly 1 NSIS installer (.exe) in $NSIS_DIR, found $EXE_COUNT."
             exit 1
           fi
+          
+          if [ "$SIG_COUNT" -ne 1 ]; then
+            echo "Error: Expected exactly 1 NSIS signature file (.exe.sig) in $NSIS_DIR, found $SIG_COUNT."
+            exit 1
+          fi
+          
+          SIG_FILE=$(find "$NSIS_DIR" -name "*.exe.sig" | head -n 1)
           SIGNATURE=$(cat "$SIG_FILE")
           echo "Signature successfully extracted from $SIG_FILE"
           
@@ -103,6 +115,31 @@ jobs:
           echo "Created update manifest payload:"
           cat "$MANIFEST_FILE"
 
+          # 5. Schema Validation Gate
+          echo "Validating manifest schema structure..."
+          node -e '
+            const fs = require("fs");
+            const manifestPath = process.env.MANIFEST_FILE || "latest.json";
+            const data = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+            if (!data.version || !data.pub_date || !data.platforms) {
+              console.error("Schema Validation Error: Missing required top-level keys.");
+              process.exit(1);
+            }
+            const platformKeys = Object.keys(data.platforms);
+            if (platformKeys.length === 0) {
+              console.error("Schema Validation Error: No platform entries defined.");
+              process.exit(1);
+            }
+            for (const key of platformKeys) {
+              const plat = data.platforms[key];
+              if (!plat.signature || !plat.url) {
+                console.error(`Schema Validation Error: Platform ${key} missing signature or url.`);
+                process.exit(1);
+              }
+            }
+            console.log("Manifest schema validation passed successfully!");
+          '
+
       - name: Generate Github Release
         uses: softprops/action-gh-release@v2
         with:
@@ -119,3 +156,31 @@ jobs:
             Sales Monitoring System release version ${{ github.ref_name }}.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Verify Live Release Asset Reachability
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          echo "Verifying live asset reachability for tag $TAG_NAME..."
+          # Allow up to 10 seconds for GitHub Release asset propagation
+          sleep 10
+          
+          MANIFEST_NAME="latest.json"
+          if [[ "$TAG_NAME" == *"preview"* ]]; then
+            MANIFEST_NAME="preview-latest.json"
+          elif [[ "$TAG_NAME" == *"internal"* ]]; then
+            MANIFEST_NAME="internal-latest.json"
+          fi
+          
+          MANIFEST_URL="https://github.com/janayuv/sales-monitoring-system/releases/download/$TAG_NAME/$MANIFEST_NAME"
+          echo "Checking reachability of $MANIFEST_URL (following redirects)..."
+          
+          STATUS=$(curl -sL -w "%{http_code}" -o /dev/null "$MANIFEST_URL" || echo "000")
+          echo "HTTP Response Code for $MANIFEST_NAME: $STATUS"
+          
+          if [ "$STATUS" -ne 200 ]; then
+            echo "Warning: Asset $MANIFEST_NAME returned HTTP status $STATUS. (Verify repository public visibility settings if status is 404)."
+          else
+            echo "Asset $MANIFEST_NAME is publicly accessible and verified!"
+          fi

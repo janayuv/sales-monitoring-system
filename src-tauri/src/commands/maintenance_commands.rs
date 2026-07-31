@@ -334,19 +334,33 @@ pub async fn check_for_updates_custom(
         _ => format!("{}/latest.json", base_url),
     };
 
+    log::info!(
+        "[Updater] Checking channel '{}' using endpoint: {}",
+        channel,
+        endpoint
+    );
+
     let url = url::Url::parse(&endpoint)
         .map_err(|e| AppError::Internal(format!("Invalid endpoint URL: {}", e)))?;
 
-    let updater = app.updater_builder()
+    let updater = app
+        .updater_builder()
         .endpoints(vec![url])
         .map_err(|e| AppError::Internal(format!("Failed to set endpoints: {}", e)))?
         .build()
         .map_err(|e| AppError::Internal(format!("Failed to build updater: {}", e)))?;
 
-    let update = updater.check().await
-        .map_err(|e| AppError::Internal(format!("Failed to check for updates: {}", e)))?;
+    let update = updater.check().await.map_err(|e| {
+        log::error!("[Updater] Check failed: {}", e);
+        AppError::Internal(format!("Failed to check for updates: {}", e))
+    })?;
 
     if let Some(update) = update {
+        log::info!(
+            "[Updater] Update Available! Remote Version: {}, Target Date: {:?}",
+            update.version,
+            update.date
+        );
         let info = CustomUpdateInfo {
             version: update.version.clone(),
             date: update.date.map(|d| format!("{}", d)),
@@ -355,6 +369,7 @@ pub async fn check_for_updates_custom(
         *state.0.lock().await = Some(update);
         Ok(Some(info))
     } else {
+        log::info!("[Updater] No update available. Current version is up to date.");
         *state.0.lock().await = None;
         Ok(None)
     }
@@ -366,25 +381,40 @@ pub async fn install_pending_update_custom(
     state: tauri::State<'_, PendingUpdate>,
 ) -> Result<(), AppError> {
     use tauri::Emitter;
-    
+
     let mut guard = state.0.lock().await;
     let update = guard.take().ok_or_else(|| {
+        log::warn!("[Updater] Attempted install with no pending update cached.");
         AppError::Internal("No pending update has been checked or cached.".to_string())
     })?;
 
+    log::info!(
+        "[Updater] Launching payload download & installation for version: {}",
+        update.version
+    );
+
     let app_clone1 = app.clone();
     let app_clone2 = app.clone();
-    update.download_and_install(
-        move |chunk_length, content_length| {
-            let total = content_length.unwrap_or(0);
-            app_clone1.emit("custom-updater-progress", (chunk_length, total)).ok();
-        },
-        move || {
-            app_clone2.emit("custom-updater-finished", ()).ok();
-        }
-    ).await
-    .map_err(|e| AppError::Internal(format!("Failed to execute update: {}", e)))?;
+    update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                let total = content_length.unwrap_or(0);
+                app_clone1
+                    .emit("custom-updater-progress", (chunk_length, total))
+                    .ok();
+            },
+            move || {
+                log::info!("[Updater] Payload download finished successfully.");
+                app_clone2.emit("custom-updater-finished", ()).ok();
+            },
+        )
+        .await
+        .map_err(|e| {
+            log::error!("[Updater] Installation failed: {}", e);
+            AppError::Internal(format!("Failed to execute update: {}", e))
+        })?;
 
+    log::info!("[Updater] Update installation completed. Application restart required.");
     Ok(())
 }
 
