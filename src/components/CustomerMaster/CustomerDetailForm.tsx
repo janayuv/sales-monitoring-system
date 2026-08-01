@@ -8,6 +8,8 @@ import {
   Tag,
   Save,
   Sparkles,
+  Maximize2,
+  Plus,
 } from "lucide-react";
 import { CustomerMasterRow } from "../../types/bindings/CustomerMasterRow";
 import { CustomerCategoryRow } from "../../types/bindings/CustomerCategoryRow";
@@ -65,6 +67,14 @@ function toPayload(r: CustomerMasterRow): CustomerMasterPayload {
 export default function CustomerDetailForm({ initial, categories, onClose, onSaved }: Props) {
   const [form, setForm] = useState<CustomerMasterPayload>(initial ? toPayload(initial) : EMPTY);
   const [saving, setSaving] = useState(false);
+  const [windowSize, setWindowSize] = useState<"1x" | "2x" | "full">("1x");
+
+  // Category creation states
+  const [categoryList, setCategoryList] = useState<CustomerCategoryRow[]>(categories);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [creatingCategory, setCreatingCategory] = useState(false);
+
   const isCreate = initial === null;
 
   const set = (k: keyof CustomerMasterPayload, v: string) =>
@@ -91,6 +101,23 @@ export default function CustomerDetailForm({ initial, categories, onClose, onSav
     }
   };
 
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    setCreatingCategory(true);
+    try {
+      const created = await ApiService.createCustomerCategory(newCategoryName.trim());
+      setCategoryList((prev) => [...prev, created]);
+      setForm((f) => ({ ...f, category_name: created.name }));
+      setNewCategoryName("");
+      setShowAddCategory(false);
+      onSaved(); // Refresh main tab categories list
+    } catch (err: any) {
+      alert(`Failed to add category: ${err.message || err}`);
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
   const field = (
     label: string,
     k: keyof CustomerMasterPayload,
@@ -112,13 +139,22 @@ export default function CustomerDetailForm({ initial, categories, onClose, onSav
     </div>
   );
 
+  const modalSizeClass =
+    windowSize === "1x"
+      ? "max-w-4xl max-h-[90vh]"
+      : windowSize === "2x"
+      ? "w-[92vw] max-w-[92vw] max-h-[94vh]"
+      : "w-[98vw] max-w-none h-[96vh] max-h-[96vh]";
+
   return (
-    /* Modal Backdrop - Backdrop click disabled to prevent accidental closure */
-    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto animate-fadeIn">
-      {/* Centered Modal Dialog Card */}
-      <div className="w-full max-w-4xl max-h-[90vh] bg-[var(--ember-surface)] border border-[var(--ember-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden my-auto">
+    /* Modal Backdrop */
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-fadeIn">
+      {/* Dynamic Sized Modal Dialog Card */}
+      <div
+        className={`w-full bg-[var(--ember-surface)] border border-[var(--ember-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ${modalSizeClass}`}
+      >
         {/* Modal Header */}
-        <div className="p-5 bg-[var(--ember-surface-raised)] border-b border-[var(--ember-border)] flex items-center justify-between flex-shrink-0">
+        <div className="p-4 sm:p-5 bg-[var(--ember-surface-raised)] border-b border-[var(--ember-border)] flex items-center justify-between flex-shrink-0 select-none">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-xl border border-[var(--ember-primary)]/20">
               <User className="w-5 h-5" />
@@ -138,13 +174,57 @@ export default function CustomerDetailForm({ initial, categories, onClose, onSav
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface)] rounded-xl transition-colors cursor-pointer"
-            title="Close window (Esc)"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* 1x | 2x | Full Size Switcher Segmented Control */}
+            <div className="flex items-center gap-1 bg-[var(--ember-surface)] p-1 rounded-xl border border-[var(--ember-border)] select-none">
+              <button
+                type="button"
+                onClick={() => setWindowSize("1x")}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
+                  windowSize === "1x"
+                    ? "bg-[var(--ember-primary)] text-white shadow-xs"
+                    : "text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)]"
+                }`}
+                title="Standard Compact Mode (1x)"
+              >
+                1x
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setWindowSize("2x")}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
+                  windowSize === "2x"
+                    ? "bg-[var(--ember-primary)] text-white shadow-xs"
+                    : "text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)]"
+                }`}
+                title="Large Widescreen Mode (2x)"
+              >
+                2x
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setWindowSize("full")}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                  windowSize === "full"
+                    ? "bg-[var(--ember-primary)] text-white shadow-xs"
+                    : "text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)]"
+                }`}
+                title="Full Screen Mode"
+              >
+                <Maximize2 className="w-3 h-3" /> Full
+              </button>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="p-2 text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface)] rounded-xl transition-colors cursor-pointer"
+              title="Close window (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Scrollable Modal Content */}
@@ -218,20 +298,81 @@ export default function CustomerDetailForm({ initial, categories, onClose, onSav
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Category Dropdown & Add Category Option */}
                 <div className="space-y-1.5 text-xs">
-                  <label className="text-[var(--ember-text-secondary)] font-semibold">Category</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[var(--ember-text-secondary)] font-semibold">Category</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddCategory(!showAddCategory)}
+                      className="px-2 py-0.5 rounded-md bg-[var(--ember-primary-light)] text-[var(--ember-primary)] hover:bg-[var(--ember-primary)] hover:text-white font-bold text-[11px] flex items-center gap-1 border border-[var(--ember-primary)]/30 transition-all cursor-pointer shadow-xs"
+                      title="Add a new customer category"
+                    >
+                      <Plus className="w-3 h-3" /> Add Category
+                    </button>
+                  </div>
+
                   <select
                     value={form.category_name ?? ""}
-                    onChange={(e) => set("category_name", e.target.value)}
-                    className="ember-input px-3.5 py-2 text-xs w-full cursor-pointer"
+                    onChange={(e) => {
+                      if (e.target.value === "__ADD_NEW__") {
+                        setShowAddCategory(true);
+                      } else {
+                        set("category_name", e.target.value);
+                      }
+                    }}
+                    className="ember-input px-3.5 py-2 text-xs w-full cursor-pointer font-medium"
                   >
                     <option value="">Uncategorized</option>
-                    {categories.map((c) => (
+                    {categoryList.map((c) => (
                       <option key={c.id} value={c.name}>
                         {c.name}
                       </option>
                     ))}
+                    <option value="__ADD_NEW__" className="font-bold text-[var(--ember-primary)]">
+                      + Add New Category...
+                    </option>
                   </select>
+
+                  {/* Inline Add Category Input Box */}
+                  {showAddCategory && (
+                    <div className="mt-2.5 p-3 bg-[var(--ember-surface)] border-2 border-[var(--ember-primary)]/40 rounded-xl shadow-lg animate-fadeIn space-y-2">
+                      <span className="text-[11px] font-bold text-[var(--ember-primary)] uppercase tracking-wider block">
+                        Create New Customer Category
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleCreateCategory();
+                            }
+                          }}
+                          placeholder="e.g. Wholesale, OEM..."
+                          className="ember-input px-3 py-1.5 text-xs flex-1 border-[var(--ember-primary)]/50 focus:ring-[var(--ember-primary)]"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={handleCreateCategory}
+                          disabled={creatingCategory || !newCategoryName.trim()}
+                          className="ember-btn-primary px-3.5 py-1.5 text-xs cursor-pointer disabled:opacity-50 font-bold"
+                        >
+                          {creatingCategory ? "Saving..." : "Save Category"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddCategory(false)}
+                          className="p-1.5 text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)] rounded-lg cursor-pointer"
+                          title="Cancel"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1.5 text-xs">

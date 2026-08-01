@@ -1,19 +1,16 @@
-import { useEffect, useState } from "react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Search,
-  UserPlus,
-  FileSpreadsheet,
-  Users,
-  CheckCircle,
-  AlertTriangle,
-  XCircle,
-} from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
 import { ApiService, CustomerCategoryRow } from "../../services/api";
 import { CustomerMasterRow } from "../../types/bindings/CustomerMasterRow";
+import { useCustomerTable } from "./hooks/useCustomerTable";
+import { CustomerKpiCards } from "./components/CustomerKpiCards";
+import { CustomerFilterBar } from "./components/CustomerFilterBar";
+import { DataGrid } from "../Table/DataGrid";
+import { TablePagination } from "../Table/TablePagination";
+import { TableSummaryBar } from "../Table/TableSummaryBar";
+import { BulkActionBar } from "../Table/BulkActionBar";
+import { ContextMenu } from "../Table/ContextMenu";
+import { createCustomerRowActions } from "./metadata/customerActions";
+import { TableExportService } from "../Table/services/tableExportService";
 import CustomerDetailForm from "./CustomerDetailForm";
 import CustomerImportPanel from "./CustomerImportPanel";
 
@@ -21,22 +18,26 @@ export default function CustomerMasterTab() {
   const [rows, setRows] = useState<CustomerMasterRow[]>([]);
   const [categories, setCategories] = useState<CustomerCategoryRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<CustomerMasterRow | null | undefined>(undefined); // undefined=closed, null=create
   const [showImport, setShowImport] = useState(false);
+  const [contextMenuState, setContextMenuState] = useState<{
+    mouseX: number;
+    mouseY: number;
+    row: CustomerMasterRow;
+  } | null>(null);
 
-  // Pagination states
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-
+  // Load dataset from backend API
   const load = async () => {
     setLoading(true);
     try {
-      const [r, c] = await Promise.all([ApiService.getCustomerMaster(), ApiService.getCustomerCategories()]);
+      const [r, c] = await Promise.all([
+        ApiService.getCustomerMaster(),
+        ApiService.getCustomerCategories(),
+      ]);
       setRows(r);
       setCategories(c);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to load customer master database:", err);
     } finally {
       setLoading(false);
     }
@@ -46,244 +47,237 @@ export default function CustomerMasterTab() {
     load();
   }, []);
 
-  // Filter rows
-  const filtered = rows.filter(
-    (r) =>
-      r.customer_code.toLowerCase().includes(search.toLowerCase()) ||
-      r.report_name.toLowerCase().includes(search.toLowerCase()) ||
-      (r.tally_name && r.tally_name.toLowerCase().includes(search.toLowerCase())) ||
-      (r.gstin && r.gstin.toLowerCase().includes(search.toLowerCase())) ||
-      (r.location && r.location.toLowerCase().includes(search.toLowerCase()))
+  // Initialize custom table orchestrator hook
+  const table = useCustomerTable(rows);
+
+  // Attach status badge formatter to match_status column
+  const enrichedColumns = useMemo(() => {
+    return table.columns.map((col) => {
+      if (col.id === "match_status") {
+        return {
+          ...col,
+          formatter: (row: CustomerMasterRow) => {
+            const pillStyle =
+              row.match_status === "Complete"
+                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
+                : row.match_status === "Incomplete"
+                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                : "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30";
+            return <span className={`px-2.5 py-1 ember-chip ${pillStyle}`}>{row.match_status}</span>;
+          },
+        };
+      }
+      if (col.id === "status") {
+        return {
+          ...col,
+          formatter: (row: CustomerMasterRow) => {
+            const isApproved = row.status === "Approved";
+            return (
+              <span
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                  isApproved
+                    ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20"
+                    : "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                }`}
+              >
+                {row.status}
+              </span>
+            );
+          },
+        };
+      }
+      return col;
+    });
+  }, [table.columns]);
+
+  // Actions for Row Context Menu
+  const rowActions = useMemo(
+    () =>
+      createCustomerRowActions({
+        onEdit: (row) => setEditing(row),
+        onCopyCode: (code) => navigator.clipboard.writeText(code),
+        onCopyGstin: (gstin) => navigator.clipboard.writeText(gstin),
+        onQuickApprove: async (row) => {
+          try {
+            await ApiService.updateCustomerMaster({
+              id: Number(row.id),
+              customer_code: row.customer_code,
+              report_name: row.report_name,
+              tally_name: row.tally_name,
+              legal_name: row.legal_name,
+              gstin: row.gstin,
+              address1: row.address1,
+              address2: row.address2,
+              location: row.location,
+              pincode: row.pincode,
+              state_code: row.state_code,
+              place_of_supply: row.place_of_supply,
+              phone: row.phone,
+              email: row.email,
+              category_name: row.category_name,
+              remarks: row.remarks,
+              status: "Approved",
+            });
+            // Optimistic update in state + refresh
+            setRows((prev) =>
+              prev.map((item) => (item.id === row.id ? { ...item, status: "Approved" } : item))
+            );
+          } catch (err: any) {
+            alert(`Failed to approve status: ${err.message || err}`);
+          }
+        },
+      }),
+    []
   );
 
-  // Reset to page 1 whenever search or pageSize changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [search, pageSize]);
+  // Multi-Scope Export Handlers
+  const handleExportCsv = (scope: "all" | "filtered") => {
+    const exportData = scope === "all" ? table.rows : table.filteredRows;
+    TableExportService.exportCSV({
+      filename: `Customer_Master_${new Date().toISOString().slice(0, 10)}`,
+      columns: enrichedColumns,
+      data: exportData,
+    });
+  };
 
-  // Calculate pagination slice
-  const totalItems = filtered.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-  const validPage = Math.min(currentPage, totalPages);
-  const startIndex = (validPage - 1) * pageSize;
-  const endIndex = Math.min(totalItems, startIndex + pageSize);
-  const paginatedRows = filtered.slice(startIndex, endIndex);
+  const handleExportClipboard = (scope: "all" | "filtered") => {
+    const exportData = scope === "all" ? table.rows : table.filteredRows;
+    TableExportService.exportClipboard({
+      filename: `Customer_Master`,
+      columns: enrichedColumns,
+      data: exportData,
+    });
+  };
 
-  // Stats calculation
-  const completeCount = rows.filter((r) => r.match_status === "Complete").length;
-  const incompleteCount = rows.filter((r) => r.match_status === "Incomplete").length;
-  const unmappedCount = rows.filter((r) => r.match_status === "Unmapped").length;
+  const handleExportPrint = (scope: "all" | "filtered") => {
+    const exportData = scope === "all" ? table.rows : table.filteredRows;
+    TableExportService.printView({
+      filename: `Customer Master Database`,
+      columns: enrichedColumns,
+      data: exportData,
+    });
+  };
 
-  const pill = (s: string) =>
-    s === "Complete"
-      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
-      : s === "Incomplete"
-      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
-      : "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30";
+  // Bulk Export Handler
+  const handleBulkExportSelected = () => {
+    const selectedRows = table.rows.filter((r) =>
+      table.selectionState.selectedIds.has(String(r.id))
+    );
+    TableExportService.exportCSV({
+      filename: `Selected_Customers_${new Date().toISOString().slice(0, 10)}`,
+      columns: enrichedColumns,
+      data: selectedRows,
+    });
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Top Header & Quick Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="ember-card p-4 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Total Customer Records</span>
-            <h3 className="text-xl font-bold font-serif text-[var(--ember-text-primary)] mt-0.5">{rows.length}</h3>
-          </div>
-          <div className="p-2.5 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-xl">
-            <Users className="w-5 h-5" />
-          </div>
-        </div>
+    <div className="space-y-4 flex flex-col flex-1">
+      {/* 1. Quick Status KPI Cards */}
+      <CustomerKpiCards
+        metrics={table.kpiMetrics}
+        activeMatchStatus={table.filterState.filters.matchStatus}
+        onSelectMatchStatus={(status) =>
+          table.filterState.setFilters((f) => ({ ...f, matchStatus: status }))
+        }
+      />
 
-        <div className="ember-card p-4 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Verified Matches</span>
-            <h3 className="text-xl font-bold font-serif text-emerald-600 dark:text-emerald-400 mt-0.5">{completeCount}</h3>
-          </div>
-          <div className="p-2.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl">
-            <CheckCircle className="w-5 h-5" />
-          </div>
-        </div>
+      {/* 2. Filter Bar & Controls */}
+      <CustomerFilterBar
+        filters={table.filterState.filters}
+        categories={categories}
+        locations={table.locations}
+        columns={enrichedColumns}
+        visibleColumns={table.columnState.visibleColumns}
+        density={table.columnState.density}
+        presets={table.presets}
+        activePresetId={table.activePresetId}
+        setFilters={table.filterState.setFilters}
+        resetFilters={table.filterState.resetFilters}
+        onChangeVisibleColumns={table.columnState.setVisibleColumns}
+        onChangeDensity={table.columnState.setDensity}
+        onSelectPreset={table.handleSelectPreset}
+        onExportCsv={handleExportCsv}
+        onExportClipboard={handleExportClipboard}
+        onExportPrint={handleExportPrint}
+        onOpenImport={() => setShowImport(true)}
+        onOpenCreate={() => setEditing(null)}
+      />
 
-        <div className="ember-card p-4 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Incomplete Mapping</span>
-            <h3 className="text-xl font-bold font-serif text-amber-600 dark:text-amber-400 mt-0.5">{incompleteCount}</h3>
-          </div>
-          <div className="p-2.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl">
-            <AlertTriangle className="w-5 h-5" />
-          </div>
-        </div>
+      {/* 3. Floating Selection Action Bar */}
+      <BulkActionBar
+        selectedCount={table.selectionState.selectedIds.size}
+        onExportSelected={handleBulkExportSelected}
+        onClearSelection={table.selectionState.clearSelection}
+      />
 
-        <div className="ember-card p-4 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Unmapped Accounts</span>
-            <h3 className="text-xl font-bold font-serif text-rose-600 dark:text-rose-400 mt-0.5">{unmappedCount}</h3>
-          </div>
-          <div className="p-2.5 bg-rose-500/10 text-rose-600 dark:text-rose-400 rounded-xl">
-            <XCircle className="w-5 h-5" />
-          </div>
-        </div>
+      {/* 4. Data Grid Container with Sticky Summary & Pagination */}
+      <div className="ember-card overflow-hidden flex flex-col flex-1">
+        {/* Sticky Summary Bar */}
+        <TableSummaryBar
+          totalItems={table.rows.length}
+          filteredItems={table.filteredRows.length}
+          selectedCount={table.selectionState.selectedIds.size}
+          activeFilterCount={table.filterState.activeFilterCount}
+          hiddenColumnsCount={table.columns.length - table.columnState.visibleColumns.length}
+          isTopSticky
+        />
+
+        {/* Data Grid Table */}
+        <DataGrid
+          data={table.paginatedRows}
+          columns={enrichedColumns}
+          visibleColumns={table.columnState.visibleColumns}
+          rowKey={(r) => String(r.id)}
+          loading={loading}
+          density={table.columnState.density}
+          sortConfig={table.sortConfig}
+          selectionState={table.selectionState.selectionState}
+          onSort={table.handleSort}
+          onToggleSelectRow={(id) => table.selectionState.toggleSelectRow(id)}
+          onToggleSelectPage={() => table.selectionState.toggleSelectPage(table.paginatedRows)}
+          onRowDoubleClick={(row) => setEditing(row)}
+          onRowContextMenu={(e, row) => {
+            e.preventDefault();
+            setContextMenuState({ mouseX: e.clientX, mouseY: e.clientY, row });
+          }}
+          emptyState={
+            table.filterState.filters.searchQuery
+              ? `No customer records match "${table.filterState.filters.searchQuery}".`
+              : "No customer records found in database."
+          }
+        />
+
+        {/* Pagination Bar */}
+        <TablePagination
+          totalItems={table.sortedRows.length}
+          pageSize={table.paginationState.pageSize}
+          pageIndex={table.paginationState.pageIndex}
+          onPageChange={table.paginationState.setPageIndex}
+          onPageSizeChange={table.paginationState.setPageSize}
+        />
       </div>
 
-      {/* Control Bar: Search & Action Buttons */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 ember-card p-4">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ember-text-muted)]" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search code, name, Tally, GSTIN, location..."
-            className="ember-input pl-9 pr-3 py-2 text-xs w-full"
-          />
-        </div>
+      {/* 5. Right-Click Context Menu */}
+      <ContextMenu
+        contextMenu={contextMenuState}
+        actions={rowActions}
+        onClose={() => setContextMenuState(null)}
+      />
 
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-          <button
-            onClick={() => setShowImport(true)}
-            className="ember-btn-secondary px-4 py-2 text-xs flex items-center gap-1.5 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-[var(--ember-primary)]" /> Import Master File
-          </button>
-          <button
-            onClick={() => setEditing(null)}
-            className="ember-btn-primary px-4 py-2 text-xs flex items-center gap-1.5 cursor-pointer"
-          >
-            <UserPlus className="w-3.5 h-3.5" /> + Add Customer
-          </button>
-        </div>
-      </div>
-
-      {/* Customer Master Data Table */}
-      <div className="ember-card overflow-hidden flex flex-col">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
-                <th className="p-3.5">Code</th>
-                <th className="p-3.5">Report Name</th>
-                <th className="p-3.5">Tally Name</th>
-                <th className="p-3.5 font-mono">GSTIN</th>
-                <th className="p-3.5">Location</th>
-                <th className="p-3.5 text-center">Match Status</th>
-                <th className="p-3.5 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--ember-border-subtle)]">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-[var(--ember-text-muted)]">
-                    Loading customer database...
-                  </td>
-                </tr>
-              ) : paginatedRows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-[var(--ember-text-muted)]">
-                    {search ? `No customers match search query "${search}".` : "No customer records found."}
-                  </td>
-                </tr>
-              ) : (
-                paginatedRows.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="hover:bg-[var(--ember-surface-raised)] transition-colors cursor-pointer"
-                    onDoubleClick={() => setEditing(r)}
-                  >
-                    <td className="p-3.5 font-mono font-bold text-[var(--ember-primary)]">{r.customer_code}</td>
-                    <td className="p-3.5 text-[var(--ember-text-primary)] font-medium">{r.report_name}</td>
-                    <td className="p-3.5 text-[var(--ember-text-secondary)]">{r.tally_name ?? "—"}</td>
-                    <td className="p-3.5 text-[var(--ember-text-muted)] font-mono">{r.gstin ?? "—"}</td>
-                    <td className="p-3.5 text-[var(--ember-text-secondary)]">{r.location ?? "—"}</td>
-                    <td className="p-3.5 text-center">
-                      <span className={`px-2.5 py-1 ember-chip ${pill(r.match_status)}`}>{r.match_status}</span>
-                    </td>
-                    <td className="p-3.5 text-right">
-                      <button
-                        onClick={() => setEditing(r)}
-                        className="text-[var(--ember-primary)] hover:underline font-semibold text-xs"
-                      >
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination Footer */}
-        <div className="p-4 border-t border-[var(--ember-border)] bg-[var(--ember-surface-raised)] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
-          {/* Item counter & Rows per page */}
-          <div className="flex items-center gap-4 text-[var(--ember-text-secondary)]">
-            <span>
-              Showing <strong className="text-[var(--ember-text-primary)] font-mono">{totalItems > 0 ? startIndex + 1 : 0}</strong> to{" "}
-              <strong className="text-[var(--ember-text-primary)] font-mono">{endIndex}</strong> of{" "}
-              <strong className="text-[var(--ember-text-primary)] font-mono">{totalItems}</strong> entries
-            </span>
-
-            <div className="flex items-center gap-2">
-              <span className="text-[var(--ember-text-muted)] text-[11px]">Rows per page:</span>
-              <select
-                value={pageSize}
-                onChange={(e) => setPageSize(Number(e.target.value))}
-                className="ember-input px-2 py-1 text-xs font-mono cursor-pointer"
-              >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Page navigation controls */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setCurrentPage(1)}
-              disabled={validPage <= 1}
-              className="ember-btn-secondary p-1.5 text-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              title="First Page"
-            >
-              <ChevronsLeft className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={validPage <= 1}
-              className="ember-btn-secondary p-1.5 text-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              title="Previous Page"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-
-            <span className="px-3 py-1 bg-[var(--ember-surface)] border border-[var(--ember-border)] rounded-lg text-xs font-mono text-[var(--ember-text-primary)]">
-              Page <strong className="text-[var(--ember-primary)]">{validPage}</strong> of {totalPages}
-            </span>
-
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={validPage >= totalPages}
-              className="ember-btn-secondary p-1.5 text-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              title="Next Page"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setCurrentPage(totalPages)}
-              disabled={validPage >= totalPages}
-              className="ember-btn-secondary p-1.5 text-xs disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              title="Last Page"
-            >
-              <ChevronsRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
+      {/* 6. Edit/Create Modal */}
       {editing !== undefined && (
-        <CustomerDetailForm initial={editing} categories={categories} onClose={() => setEditing(undefined)} onSaved={load} />
+        <CustomerDetailForm
+          initial={editing}
+          categories={categories}
+          onClose={() => setEditing(undefined)}
+          onSaved={load}
+        />
       )}
-      {showImport && <CustomerImportPanel onClose={() => setShowImport(false)} onImported={load} />}
+
+      {/* 7. Import Modal */}
+      {showImport && (
+        <CustomerImportPanel onClose={() => setShowImport(false)} onImported={load} />
+      )}
     </div>
   );
 }
