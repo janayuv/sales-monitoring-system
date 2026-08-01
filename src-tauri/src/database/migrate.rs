@@ -547,6 +547,79 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
             rebuild: false,
             sql: "ALTER TABLE invoices ADD COLUMN version INTEGER NOT NULL DEFAULT 1;",
         },
+        Migration {
+            version: 11,
+            description: "Recalculate and fix invoice and line item total values",
+            rebuild: false,
+            sql: "
+                UPDATE invoice_items
+                SET total_value = ROUND(assessable_value + cgst_amount + sgst_amount + igst_amount, 2);
+
+                UPDATE invoices
+                SET total_taxable = ROUND((SELECT COALESCE(SUM(assessable_value), invoices.total_taxable) FROM invoice_items WHERE invoice_items.invoice_number = invoices.invoice_number), 2),
+                    total_cgst = ROUND((SELECT COALESCE(SUM(cgst_amount), invoices.total_cgst) FROM invoice_items WHERE invoice_items.invoice_number = invoices.invoice_number), 2),
+                    total_sgst = ROUND((SELECT COALESCE(SUM(sgst_amount), invoices.total_sgst) FROM invoice_items WHERE invoice_items.invoice_number = invoices.invoice_number), 2),
+                    total_igst = ROUND((SELECT COALESCE(SUM(igst_amount), invoices.total_igst) FROM invoice_items WHERE invoice_items.invoice_number = invoices.invoice_number), 2)
+                WHERE EXISTS (
+                    SELECT 1 FROM invoice_items WHERE invoice_items.invoice_number = invoices.invoice_number
+                );
+
+                UPDATE invoices
+                SET total_value = ROUND(total_taxable + total_cgst + total_sgst + total_igst + total_cess, 2);
+
+                DELETE FROM summary_monthly_sales;
+                INSERT INTO summary_monthly_sales
+                    (financial_year_id, month_no, total_taxable, total_cgst, total_sgst, total_igst, total_value, invoice_count, active_count, cancelled_count)
+                 SELECT
+                    financial_year_id,
+                    strftime('%Y-%m', invoice_date),
+                    COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Draft') THEN total_taxable ELSE 0.0 END), 0.0),
+                    COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Draft') THEN total_cgst ELSE 0.0 END), 0.0),
+                    COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Draft') THEN total_sgst ELSE 0.0 END), 0.0),
+                    COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Draft') THEN total_igst ELSE 0.0 END), 0.0),
+                    COALESCE(SUM(CASE WHEN status NOT IN ('Cancelled', 'Draft') THEN total_value ELSE 0.0 END), 0.0),
+                    COUNT(*),
+                    SUM(CASE WHEN status NOT IN ('Cancelled', 'Draft') THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END)
+                 FROM invoices
+                 GROUP BY financial_year_id, strftime('%Y-%m', invoice_date);
+
+                DELETE FROM summary_customer_sales;
+                INSERT INTO summary_customer_sales
+                    (financial_year_id, customer_id, total_taxable, total_cgst, total_sgst, total_igst, total_value)
+                 SELECT
+                    i.financial_year_id,
+                    i.customer_id,
+                    COALESCE(SUM(i.total_taxable), 0.0),
+                    COALESCE(SUM(i.total_cgst), 0.0),
+                    COALESCE(SUM(i.total_sgst), 0.0),
+                    COALESCE(SUM(i.total_igst), 0.0),
+                    COALESCE(SUM(i.total_value), 0.0)
+                 FROM invoices i
+                 WHERE i.status NOT IN ('Cancelled', 'Draft')
+                 GROUP BY i.financial_year_id, i.customer_id;
+
+                DELETE FROM summary_supplier_sales;
+                INSERT INTO summary_supplier_sales
+                    (financial_year_id, supplier_id, part_code, total_qty, total_taxable, total_cgst, total_sgst, total_igst, total_value, avg_selling_price)
+                 SELECT
+                    i.financial_year_id,
+                    it.supplier_id,
+                    ii.part_code,
+                    COALESCE(SUM(ii.quantity), 0.0),
+                    COALESCE(SUM(ii.assessable_value), 0.0),
+                    COALESCE(SUM(ii.cgst_amount), 0.0),
+                    COALESCE(SUM(ii.sgst_amount), 0.0),
+                    COALESCE(SUM(ii.igst_amount), 0.0),
+                    COALESCE(SUM(ii.total_value), 0.0),
+                    CASE WHEN SUM(ii.quantity) > 0 THEN SUM(ii.total_value) / SUM(ii.quantity) ELSE 0.0 END
+                 FROM invoice_items ii
+                 JOIN invoices i ON ii.invoice_number = i.invoice_number
+                 JOIN items it ON ii.part_code = it.part_code
+                 WHERE i.status NOT IN ('Cancelled', 'Draft') AND it.supplier_id IS NOT NULL
+                 GROUP BY i.financial_year_id, it.supplier_id, ii.part_code;
+            ",
+        },
     ];
 
     // 4. Apply migrations sequentially

@@ -69,7 +69,7 @@ export const InvoiceEditModal: React.FC<InvoiceEditModalProps> = ({
       setStatus(invHeader.status);
 
       const mappedItems: InvoiceItemUpdatePayload[] = invItems.map((i) => ({
-        id: i.id ? Number(i.id) : null,
+        id: i.id != null ? BigInt(i.id) : null,
         part_code: i.part_code,
         description: i.description || "",
         quantity: i.quantity,
@@ -217,7 +217,7 @@ export const InvoiceEditModal: React.FC<InvoiceEditModalProps> = ({
       const payload: InvoiceUpdatePayload = {
         invoice_number: invoiceNumber,
         expected_version: header?.version || 1,
-        customer_id: customerId,
+        customer_id: BigInt(customerId),
         place_of_supply: placeOfSupply.trim() || null,
         reverse_charge: reverseCharge,
         invoice_type: invoiceType,

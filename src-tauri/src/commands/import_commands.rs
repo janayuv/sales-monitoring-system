@@ -349,10 +349,7 @@ pub fn commit_import_batch(
         let sgst = row_data.get("sgst_amount").map(cell_to_f64).unwrap_or(0.0);
         let igst_rate = row_data.get("igst_rate").map(cell_to_f64).unwrap_or(0.0);
         let igst = row_data.get("igst_amount").map(cell_to_f64).unwrap_or(0.0);
-        let mut total_val = row_data.get("total_value").map(cell_to_f64).unwrap_or(0.0);
-        if total_val == 0.0 {
-            total_val = ass_val + cgst + sgst + igst;
-        }
+        let line_item_total = ((ass_val + cgst + sgst + igst) * 100.0).round() / 100.0;
 
         let item_row = InvoiceItemRow {
             id: None,
@@ -368,7 +365,7 @@ pub fn commit_import_batch(
             sgst_amount: sgst,
             igst_rate,
             igst_amount: igst,
-            total_value: total_val,
+            total_value: line_item_total,
         };
 
         invoice_items_buffer
@@ -408,7 +405,7 @@ pub fn commit_import_batch(
         header.total_cgst += cgst;
         header.total_sgst += sgst;
         header.total_igst += igst;
-        header.total_value += total_val;
+        header.total_value += line_item_total;
 
         success_count += 1;
     }
@@ -417,6 +414,11 @@ pub fn commit_import_batch(
     for (inv_no, mut header) in invoice_headers_buffer {
         // Imported invoices default to "Imported" status for immediate active visibility
         header.status = "Imported".to_string();
+        header.total_taxable = (header.total_taxable * 100.0).round() / 100.0;
+        header.total_cgst = (header.total_cgst * 100.0).round() / 100.0;
+        header.total_sgst = (header.total_sgst * 100.0).round() / 100.0;
+        header.total_igst = (header.total_igst * 100.0).round() / 100.0;
+        header.total_value = ((header.total_taxable + header.total_cgst + header.total_sgst + header.total_igst + header.total_cess) * 100.0).round() / 100.0;
 
         // Delete existing invoice lines if overwriting
         tx.execute(

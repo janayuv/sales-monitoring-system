@@ -20,12 +20,33 @@ export const UpdateCard: React.FC = () => {
   } = useUpdater();
 
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [checkResult, setCheckResult] = useState<{
+    kind: "info" | "success" | "error";
+    text: string;
+  } | null>(null);
 
   const handleManualCheck = async () => {
+    setCheckResult(null);
     try {
-      await checkForUpdates(true); // force = true (override skip/rollout rules)
+      const res = await checkForUpdates(true); // force = true (override skip rules)
+      if (res.success) {
+        if (res.data) {
+          setCheckResult({ kind: "success", text: `Update available: v${res.data.version}.` });
+        } else {
+          setCheckResult({ kind: "info", text: "You're on the latest version." });
+        }
+      } else {
+        setCheckResult({
+          kind: "error",
+          text: res.message || "Update check failed. Please try again.",
+        });
+      }
     } catch (e) {
       console.error(e);
+      setCheckResult({
+        kind: "error",
+        text: e instanceof Error ? e.message : "Update check failed.",
+      });
     }
   };
 
@@ -134,6 +155,22 @@ export const UpdateCard: React.FC = () => {
               "Check Now for Updates"
             )}
           </button>
+
+          {/* Manual check result feedback */}
+          {checkResult && (
+            <div
+              className={
+                "text-[11px] rounded-lg px-3 py-2 border " +
+                (checkResult.kind === "error"
+                  ? "bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300"
+                  : checkResult.kind === "success"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                  : "bg-[var(--ember-surface-raised)] border-[var(--ember-border)] text-[var(--ember-text-secondary)]")
+              }
+            >
+              {checkResult.text}
+            </div>
+          )}
         </div>
 
         {/* Diagnostics & Logs column */}

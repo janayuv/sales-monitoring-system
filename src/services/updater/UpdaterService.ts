@@ -5,7 +5,7 @@ import { relaunch as tauriRelaunch } from "@tauri-apps/plugin-process";
 import { IUpdateProvider } from "./IUpdateProvider";
 import { UpdateSettingsService } from "./UpdateSettingsService";
 import { UpdateState, UpdateError, UpdateResult, UpdateManifest, BuildMetadata } from "../../types/updater";
-import { compareVersions } from "../../utils/semver";
+import { CustomUpdateInfo } from "../../types/bindings/CustomUpdateInfo";
 import { UpdateLogger } from "../../logging/updateLogger";
 
 type UpdaterEvent =
@@ -106,23 +106,6 @@ export class UpdaterService {
   }
 
   /**
-   * Generates or fetches a persistent machine identifier to use in staged rollouts.
-   */
-  private getMachineIdentifierHash(): number {
-    let machineId = localStorage.getItem("updater_machine_id");
-    if (!machineId) {
-      machineId = crypto.randomUUID();
-      localStorage.setItem("updater_machine_id", machineId);
-    }
-    // Calculate a simple numeric hash modulo 100
-    let hash = 0;
-    for (let i = 0; i < machineId.length; i++) {
-      hash = (hash + machineId.charCodeAt(i)) % 100;
-    }
-    return hash;
-  }
-
-  /**
    * Helper to perform network retries with exponential backoff.
    */
   private async retryWithBackoff<T>(
@@ -148,7 +131,13 @@ export class UpdaterService {
 
   /**
    * Checks for updates against the configured channel.
-   * @param force If true, ignores skipped versions and staged rollouts (e.g. manual click).
+   *
+   * Detection runs through the Rust backend (`check_for_updates_custom`), which uses
+   * tauri-plugin-updater to fetch and compare the manifest server-side. This avoids the
+   * webview CORS failures that occur when fetching GitHub release assets directly from the
+   * frontend, and keeps version detection consistent with the download/install step.
+   *
+   * @param force If true, ignores skipped versions (e.g. manual click).
    */
   public async checkForUpdates(force = false): Promise<UpdateResult<UpdateManifest | null>> {
     if (this.state === "Downloading" || this.state === "Installing") {
@@ -164,62 +153,48 @@ export class UpdaterService {
 
     try {
       const channel = await UpdateSettingsService.getChannel();
-      const meta = await this.getBuildMetadata();
-      const currentVersion = meta.app_version;
 
-      // 1. Fetch manifest with retry logic
-      const manifestResult = await this.retryWithBackoff(
-        () => this.provider.fetchManifest(channel),
+      // 1. Check via the Rust backend with retry logic (server-side, no webview CORS).
+      //    Returns the update info when a newer version exists, or null when up to date.
+      const info = await this.retryWithBackoff(
+        () => invoke<CustomUpdateInfo | null>("check_for_updates_custom", { channel }),
         3,
         1500,
         2
       );
 
-      if (!manifestResult.success) {
-        this.setState("Failed");
-        this.emit("Failed", manifestResult.error, manifestResult.message);
-        return manifestResult;
-      }
-
-      const manifest = manifestResult.data;
-
-      // 2. Validate manifest format
-      if (!manifest.version) {
-        this.setState("Failed");
-        this.emit("Failed", "ManifestInvalid", "Manifest is missing version string.");
-        return { success: false, error: "ManifestInvalid", message: "Manifest is missing version string." };
-      }
-
-      // 3. SemVer check
-      const hasNewer = compareVersions(manifest.version, currentVersion) > 0;
-      if (!hasNewer) {
+      // 2. No newer version available.
+      if (!info) {
         this.setState("NoUpdate");
         this.emit("NoUpdate");
         return { success: true, data: null };
       }
 
-      // 4. Skipped version check (unless forced)
+      // 3. Skipped version check (unless forced).
       if (!force) {
         const skipped = await UpdateSettingsService.getSkippedVersion();
-        if (skipped === manifest.version) {
+        if (skipped === info.version) {
           this.setState("NoUpdate");
           this.emit("NoUpdate");
           return { success: true, data: null };
         }
       }
 
-      // 5. Staged Rollout verification (unless forced)
-      // Custom rollout field can be inside platforms record or top level
-      const topLevelRollout = (manifest as any).rollout;
-      if (!force && typeof topLevelRollout === "number") {
-        const machineHash = this.getMachineIdentifierHash();
-        if (machineHash >= topLevelRollout) {
-          // Machine is not in the rollout percentage pool, skip silently
-          this.setState("NoUpdate");
-          this.emit("NoUpdate");
-          return { success: true, data: null };
-        }
+      // 4. Resolve release notes (GitHub API supports CORS; falls back gracefully).
+      let notes = info.body ?? "";
+      try {
+        notes = await this.provider.fetchReleaseNotes(info.version);
+      } catch {
+        // Keep whatever the manifest provided (may be empty).
       }
+
+      const manifest: UpdateManifest = {
+        manifestVersion: 1,
+        version: info.version,
+        notes,
+        pub_date: info.date ?? undefined,
+        platforms: {},
+      };
 
       // Update is available!
       this.setState("UpdateAvailable");
@@ -228,7 +203,13 @@ export class UpdaterService {
     } catch (e) {
       const isOffline = !navigator.onLine;
       const errType: UpdateError = isOffline ? "Offline" : "Unknown";
-      const errMsg = isOffline ? "Internet connection is offline." : String(e);
+      const errMsg = isOffline
+        ? "Internet connection is offline."
+        : e instanceof Error
+        ? e.message
+        : typeof e === "string"
+        ? e
+        : "Failed to check for updates.";
 
       this.setState("Failed");
       this.emit("Failed", errType, errMsg);
