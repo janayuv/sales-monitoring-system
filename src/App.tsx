@@ -33,7 +33,8 @@ import {
   Printer,
   X,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  Maximize2
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
@@ -138,6 +139,7 @@ function App() {
   const [selectedInvoiceItems, setSelectedInvoiceItems] = useState<InvoiceItemRow[]>([]);
   const [selectedInvoiceAuditLogs, setSelectedInvoiceAuditLogs] = useState<AuditLogRow[]>([]);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [inspectWindowSize, setInspectWindowSize] = useState<"1x" | "2x" | "full">("2x");
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [editingInvoiceNumber, setEditingInvoiceNumber] = useState<string | null>(null);
 
@@ -2567,36 +2569,101 @@ function App() {
           )}
         </div>
 
-        {/* Invoice Details Drawer Inspector */}
+        {/* Invoice Details Inspect Modal */}
         {isDetailOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-end transition-all duration-300">
-            <div className="w-full max-w-3xl bg-[var(--ember-surface)] border-l border-[var(--ember-border)] h-full flex flex-col shadow-2xl overflow-y-auto">
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex justify-center items-center p-2 sm:p-4 overflow-y-auto">
+            <div
+              className={`bg-[var(--ember-surface)] border border-[var(--ember-border)] w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-200 text-xs font-sans ${
+                inspectWindowSize === "1x"
+                  ? "max-w-7xl max-h-[95vh]"
+                  : inspectWindowSize === "2x"
+                  ? "w-[90vw] max-w-[90vw] max-h-[95vh]"
+                  : "w-[98vw] max-w-none h-[96vh] max-h-[96vh]"
+              }`}
+            >
               {loadingDetails ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-[var(--ember-text-muted)]">
+                <div className="flex-1 flex flex-col items-center justify-center p-12 text-[var(--ember-text-muted)]">
                   <RefreshCw className="w-8 h-8 animate-spin text-[var(--ember-primary)] mb-3" />
                   <span>Loading invoice record and lines...</span>
                 </div>
               ) : selectedInvoice ? (
-                <div className="flex-1 flex flex-col justify-between">
-                  <div className="p-6 border-b border-[var(--ember-border)] flex items-center justify-between bg-[var(--ember-surface-raised)]">
+                <div className="flex-1 flex flex-col justify-between overflow-hidden">
+                  {/* Modal Header */}
+                  <div className="px-6 py-3.5 border-b border-[var(--ember-border)] flex justify-between items-center bg-[var(--ember-surface-raised)] select-none">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-lg">
                         <FileText className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className="text-[10px] text-[var(--ember-text-muted)] font-bold uppercase tracking-wider">Invoice Details</span>
-                        <h3 className="text-base font-bold font-serif text-[var(--ember-text-primary)]">No. {selectedInvoice.invoice_number}</h3>
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-base font-bold font-serif text-[var(--ember-text-primary)]">
+                            Inspect Sales Invoice
+                          </h2>
+                          <span className="px-2 py-0.5 rounded bg-[var(--ember-surface)] border border-[var(--ember-border)] font-mono text-[10px] text-[var(--ember-primary)]">
+                            v{selectedInvoice.version || 1}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[var(--ember-text-muted)] font-mono mt-0.5">
+                          Invoice No: <span className="font-bold text-[var(--ember-text-primary)]">{selectedInvoice.invoice_number}</span> | Date: {selectedInvoice.invoice_date}
+                        </p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => setIsDetailOpen(false)}
-                      className="ember-btn-secondary px-3 py-1.5 text-xs"
-                    >
-                      Close Inspector
-                    </button>
+
+                    <div className="flex items-center gap-3">
+                      {/* 1x | 2x | Full Size Switcher Segmented Control */}
+                      <div className="flex items-center gap-1 bg-[var(--ember-surface)] p-1 rounded-xl border border-[var(--ember-border)] select-none">
+                        <button
+                          type="button"
+                          onClick={() => setInspectWindowSize("1x")}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
+                            inspectWindowSize === "1x"
+                              ? "bg-[var(--ember-primary)] text-white shadow-xs"
+                              : "text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)]"
+                          }`}
+                          title="Standard Mode (1x)"
+                        >
+                          1x
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setInspectWindowSize("2x")}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer ${
+                            inspectWindowSize === "2x"
+                              ? "bg-[var(--ember-primary)] text-white shadow-xs"
+                              : "text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)]"
+                          }`}
+                          title="Widescreen Mode (2x)"
+                        >
+                          2x
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setInspectWindowSize("full")}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                            inspectWindowSize === "full"
+                              ? "bg-[var(--ember-primary)] text-white shadow-xs"
+                              : "text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] hover:bg-[var(--ember-surface-raised)]"
+                          }`}
+                          title="Full Screen Mode"
+                        >
+                          <Maximize2 className="w-3 h-3" /> Full
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => setIsDetailOpen(false)}
+                        className="p-1.5 rounded-lg hover:bg-[var(--ember-surface)] text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] transition-colors cursor-pointer"
+                        title="Close Inspector (Esc)"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="p-6 flex-1 space-y-6">
+                  {/* Modal Scrollable Body */}
+                  <div className="p-6 flex-1 overflow-y-auto space-y-6">
                     <div className="grid grid-cols-3 gap-6 bg-[var(--ember-surface-raised)] p-4 rounded-xl border border-[var(--ember-border)]">
                       <div>
                         <span className="text-[10px] text-[var(--ember-text-muted)] font-semibold block">Invoice Date</span>
@@ -2714,6 +2781,7 @@ function App() {
                     </div>
                   </div>
 
+                  {/* Modal Footer */}
                   <div className="p-6 border-t border-[var(--ember-border)] bg-[var(--ember-surface-raised)] flex justify-between gap-4">
                     <button
                       onClick={handleDeleteRecord}
