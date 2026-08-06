@@ -7,6 +7,7 @@ pub mod database;
 pub mod error;
 pub mod models;
 pub mod repositories;
+pub mod reports;
 pub mod services;
 pub mod state;
 pub mod utils;
@@ -78,6 +79,8 @@ pub fn run() {
             commands::export_commands::get_top_customers,
             commands::export_commands::get_top_items,
             commands::export_commands::get_dashboard_metrics,
+            commands::export_commands::get_category_report,
+            commands::export_commands::get_category_customer_breakdown,
             // Customer Master & Category Module
             commands::customer_commands::get_customer_master,
             commands::customer_commands::get_customer_categories,

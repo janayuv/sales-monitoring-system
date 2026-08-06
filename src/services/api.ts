@@ -32,6 +32,11 @@ import { CustomerMasterRow } from "../types/bindings/CustomerMasterRow";
 import { CustomerImportPreview } from "../types/bindings/CustomerImportPreview";
 import { CustomerImportResult } from "../types/bindings/CustomerImportResult";
 import { CompanyProfileRow } from "../types/bindings/CompanyProfileRow";
+import { CategoryReportFilter } from "../types/bindings/CategoryReportFilter";
+import { CategorySalesRow } from "../types/bindings/CategorySalesRow";
+import { CategoryCustomerBreakdownRow } from "../types/bindings/CategoryCustomerBreakdownRow";
+import { CategoryGrandTotals } from "../types/bindings/CategoryGrandTotals";
+import { ReportResult } from "../types/bindings/ReportResult";
 
 export type { CompanyProfileRow };
 export type { CustomerCategoryRow };
@@ -600,6 +605,33 @@ export class ApiService {
       dateFrom,
       dateTo,
       limit,
+    });
+  }
+
+  /**
+   * Get Category Sales Summary Report.
+   */
+  static async getCategoryReport(
+    filter: CategoryReportFilter
+  ): Promise<ReportResult<CategorySalesRow, CategoryGrandTotals, CategoryReportFilter>> {
+    return await invoke<ReportResult<CategorySalesRow, CategoryGrandTotals, CategoryReportFilter>>(
+      "get_category_report",
+      { filter }
+    );
+  }
+
+  /**
+   * Get Category Customer Sales Breakdown (Level 2 Drilldown).
+   */
+  static async getCategoryCustomerBreakdown(
+    filter: CategoryReportFilter,
+    categoryId?: number | null,
+    categoryName?: string
+  ): Promise<CategoryCustomerBreakdownRow[]> {
+    return await invoke<CategoryCustomerBreakdownRow[]>("get_category_customer_breakdown", {
+      filter,
+      categoryId: categoryId || null,
+      categoryName: categoryName || "Uncategorized",
     });
   }
 

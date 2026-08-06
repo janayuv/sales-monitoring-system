@@ -34,10 +34,12 @@ import {
   X,
   PanelLeftClose,
   PanelLeftOpen,
-  Maximize2
+  Maximize2,
+  FolderTree
 } from "lucide-react";
 import { ApiService } from "./services/api";
 import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
+import { CategoryWiseReportTab } from "./components/CategoryReport/CategoryWiseReportTab";
 import { ImportPreview } from "./types/bindings/ImportPreview";
 
 import { ImportTemplateRow } from "./types/bindings/ImportTemplateRow";
@@ -192,7 +194,7 @@ function App() {
   const [includeDeletedCreditNotes, setIncludeDeletedCreditNotes] = useState(false);
 
   // Reports & Export States
-  const [reportSubTab, setReportSubTab] = useState<"export" | "monthly" | "gst" | "customers" | "items">("export");
+  const [reportSubTab, setReportSubTab] = useState<"export" | "categories" | "monthly" | "gst" | "customers" | "items">("export");
   const [reportDateFrom, setReportDateFrom] = useState("");
   const [reportDateTo, setReportDateTo] = useState("");
   const [exportFormat, setExportFormat] = useState<"tally" | "excel" | "csv" | "einvoice_json">("tally");
@@ -1844,6 +1846,17 @@ function App() {
                     Tally & Data Exporter
                   </button>
                   <button
+                    onClick={() => setReportSubTab("categories")}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
+                      reportSubTab === "categories"
+                        ? "ember-btn-primary shadow-sm"
+                        : "ember-btn-secondary"
+                    }`}
+                  >
+                    <FolderTree className="w-3.5 h-3.5" />
+                    Category Breakdown
+                  </button>
+                  <button
                     onClick={() => setReportSubTab("monthly")}
                     className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
                       reportSubTab === "monthly"
@@ -2045,6 +2058,15 @@ function App() {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Sub-Tab 1.5: Category Wise Sales Breakdown */}
+              {reportSubTab === "categories" && (
+                <CategoryWiseReportTab
+                  dateFrom={reportDateFrom}
+                  dateTo={reportDateTo}
+                  onInspectInvoice={handleStartEditInspector}
+                />
               )}
 
               {/* Sub-Tab 2: Monthly Sales Performance */}

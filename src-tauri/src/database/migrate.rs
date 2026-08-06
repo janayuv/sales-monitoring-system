@@ -620,6 +620,24 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                  GROUP BY i.financial_year_id, it.supplier_id, ii.part_code;
             ",
         },
+        Migration {
+            version: 12,
+            description: "Add category_id FK column to customers table, backfill from category_name, and create performance indexes",
+            rebuild: false,
+            sql: "
+                ALTER TABLE customers ADD COLUMN category_id INTEGER REFERENCES customer_categories(id) ON DELETE SET NULL;
+
+                UPDATE customers
+                SET category_id = (
+                    SELECT id FROM customer_categories WHERE customer_categories.name = customers.category_name
+                )
+                WHERE category_id IS NULL AND category_name IS NOT NULL;
+
+                CREATE INDEX IF NOT EXISTS idx_customers_category_id ON customers(category_id);
+                CREATE INDEX IF NOT EXISTS idx_customers_category_name ON customers(category_name);
+                CREATE INDEX IF NOT EXISTS idx_invoices_cust_date ON invoices(customer_id, invoice_date);
+            ",
+        },
     ];
 
     // 4. Apply migrations sequentially

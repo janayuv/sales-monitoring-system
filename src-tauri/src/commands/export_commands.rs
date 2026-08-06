@@ -5,6 +5,11 @@ use crate::services::export_service::{
     CsvExporter, Exporter, PdfExporter, StandardExcelExporter, TallyExcelExporter,
 };
 use crate::state::DbState;
+use crate::reports::common::{ReportContext, ReportResult};
+use crate::reports::category::models::{
+    CategoryCustomerBreakdownRow, CategoryGrandTotals, CategoryReportFilter, CategorySalesRow,
+};
+use crate::reports::category::service::CategoryReportService;
 use rusqlite::params;
 use tauri::State;
 
@@ -629,6 +634,62 @@ pub fn get_top_items(
     }
 
     Ok(result)
+}
+
+/// Get Category Sales Report (Summary Matrix)
+#[tauri::command]
+pub fn get_category_report(
+    state: State<'_, DbState>,
+    filter: CategoryReportFilter,
+) -> Result<ReportResult<CategorySalesRow, CategoryGrandTotals, CategoryReportFilter>, AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let ctx = ReportContext {
+        conn,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        user_name: Some("System User".to_string()),
+    };
+
+    CategoryReportService::generate_report(&ctx, filter).map_err(|e| AppError::Db {
+        code: "ERR_REP_001".to_string(),
+        message: e.to_string(),
+    })
+}
+
+/// Get Category Customer Breakdown (Level 2 Drilldown)
+#[tauri::command]
+pub fn get_category_customer_breakdown(
+    state: State<'_, DbState>,
+    filter: CategoryReportFilter,
+    category_id: Option<i64>,
+    category_name: String,
+) -> Result<Vec<CategoryCustomerBreakdownRow>, AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let ctx = ReportContext {
+        conn,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        user_name: Some("System User".to_string()),
+    };
+
+    CategoryReportService::get_customer_breakdown(&ctx, filter, category_id, &category_name).map_err(|e| AppError::Db {
+        code: "ERR_REP_002".to_string(),
+        message: e.to_string(),
+    })
 }
 
 // ======================== Dashboard Metrics Command ========================
