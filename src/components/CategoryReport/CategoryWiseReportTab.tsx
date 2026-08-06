@@ -21,7 +21,7 @@ import { CategoryCustomerBreakdownRow } from "../../types/bindings/CategoryCusto
 import { CategoryGrandTotals } from "../../types/bindings/CategoryGrandTotals";
 import { ReportResult } from "../../types/bindings/ReportResult";
 import { InvoiceSummary } from "../../types/bindings/InvoiceSummary";
-import { formatCurrency, formatNumber, formatPercent, formatDate } from "../../utils/formatters";
+import { formatAmount, formatNumber, formatPercent, formatDate } from "../../utils/formatters";
 import { ReportExportService, ExportColumn } from "../../services/reportExportService";
 
 interface Props {
@@ -212,11 +212,11 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
     { header: "Category Name", accessor: (r) => r.category_name, align: "left" },
     { header: "Billed Customers", accessor: (r) => r.customer_count, format: formatNumber, align: "right" },
     { header: "Invoices Billed", accessor: (r) => r.invoice_count, format: formatNumber, align: "right" },
-    { header: "Taxable Value (₹)", accessor: (r) => r.total_taxable, format: formatCurrency, align: "right" },
-    { header: "CGST (₹)", accessor: (r) => r.total_cgst, format: formatCurrency, align: "right" },
-    { header: "SGST (₹)", accessor: (r) => r.total_sgst, format: formatCurrency, align: "right" },
-    { header: "IGST (₹)", accessor: (r) => r.total_igst, format: formatCurrency, align: "right" },
-    { header: "Gross Total Revenue (₹)", accessor: (r) => r.total_value, format: formatCurrency, align: "right" },
+    { header: "Taxable Value", accessor: (r) => r.total_taxable, format: formatAmount, align: "right" },
+    { header: "CGST", accessor: (r) => r.total_cgst, format: formatAmount, align: "right" },
+    { header: "SGST", accessor: (r) => r.total_sgst, format: formatAmount, align: "right" },
+    { header: "IGST", accessor: (r) => r.total_igst, format: formatAmount, align: "right" },
+    { header: "Gross Total Revenue", accessor: (r) => r.total_value, format: formatAmount, align: "right" },
     {
       header: "Revenue Share %",
       accessor: (r) => (r.total_value / grandTotalValue) * 100,
@@ -231,9 +231,9 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
     { header: "Customer Name", accessor: (r) => r.report_name, align: "left" },
     { header: "Invoices", accessor: (r) => r.invoice_count, format: formatNumber, align: "right" },
     { header: "Last Invoice Date", accessor: (r) => r.last_invoice_date, format: formatDate, align: "center" },
-    { header: "Taxable Value (₹)", accessor: (r) => r.total_taxable, format: formatCurrency, align: "right" },
-    { header: "Total GST (₹)", accessor: (r) => r.total_gst, format: formatCurrency, align: "right" },
-    { header: "Grand Total Revenue (₹)", accessor: (r) => r.total_value, format: formatCurrency, align: "right" },
+    { header: "Taxable Value", accessor: (r) => r.total_taxable, format: formatAmount, align: "right" },
+    { header: "Total GST", accessor: (r) => r.total_gst, format: formatAmount, align: "right" },
+    { header: "Grand Total Revenue", accessor: (r) => r.total_value, format: formatAmount, align: "right" },
   ];
 
   const handleExportCsv = async () => {
@@ -298,7 +298,7 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--ember-text-muted)]">Total Revenue</p>
             <h4 className="text-base font-bold font-mono text-[var(--ember-primary)] mt-1">
-              {formatCurrency(reportResult?.grand_totals.grand_total_value || 0)}
+              {formatAmount(reportResult?.grand_totals.grand_total_value || 0)}
             </h4>
             <p className="text-[10px] text-[var(--ember-text-secondary)] mt-0.5">
               Across {formatNumber(reportResult?.grand_totals.total_invoices || 0)} invoices
@@ -341,7 +341,7 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--ember-text-muted)]">Avg Revenue / Category</p>
             <h4 className="text-base font-bold font-mono text-[var(--ember-text-primary)] mt-1">
-              {formatCurrency(
+              {formatAmount(
                 (reportResult?.grand_totals.grand_total_value || 0) /
                   (reportResult?.grand_totals.total_categories || 1)
               )}
@@ -522,10 +522,10 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                     </th>
                     <th className="p-3 text-right">Customers</th>
                     <th className="p-3 text-right">Invoices</th>
-                    <th className="p-3 text-right">Taxable Value (₹)</th>
-                    <th className="p-3 text-right">CGST (₹)</th>
-                    <th className="p-3 text-right">SGST (₹)</th>
-                    <th className="p-3 text-right">IGST (₹)</th>
+                    <th className="p-3 text-right">Taxable Value</th>
+                    <th className="p-3 text-right">CGST</th>
+                    <th className="p-3 text-right">SGST</th>
+                    <th className="p-3 text-right">IGST</th>
                     <th
                       className="p-3 text-right cursor-pointer hover:text-[var(--ember-primary)]"
                       onClick={() => {
@@ -533,7 +533,7 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                         setSortAsc(!sortAsc);
                       }}
                     >
-                      Gross Total (₹) {sortField === "total_value" && (sortAsc ? "↑" : "↓")}
+                      Gross Total {sortField === "total_value" && (sortAsc ? "↑" : "↓")}
                     </th>
                     <th className="p-3 text-right w-48">Revenue Share (%)</th>
                   </tr>
@@ -560,19 +560,19 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                           {formatNumber(row.invoice_count)}
                         </td>
                         <td className="p-3 text-right font-mono text-[var(--ember-text-primary)]">
-                          {formatCurrency(row.total_taxable)}
+                          {formatAmount(row.total_taxable)}
                         </td>
                         <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                          {formatCurrency(row.total_cgst)}
+                          {formatAmount(row.total_cgst)}
                         </td>
                         <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                          {formatCurrency(row.total_sgst)}
+                          {formatAmount(row.total_sgst)}
                         </td>
                         <td className="p-3 text-right font-mono text-blue-700 dark:text-blue-400">
-                          {formatCurrency(row.total_igst)}
+                          {formatAmount(row.total_igst)}
                         </td>
                         <td className="p-3 text-right font-mono font-bold text-[var(--ember-primary)]">
-                          {formatCurrency(row.total_value)}
+                          {formatAmount(row.total_value)}
                         </td>
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -608,18 +608,18 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                     </td>
                     <td className="p-3 text-right">{formatNumber(visibleTotals.customer_count)}</td>
                     <td className="p-3 text-right">{formatNumber(visibleTotals.invoice_count)}</td>
-                    <td className="p-3 text-right">{formatCurrency(visibleTotals.total_taxable)}</td>
+                    <td className="p-3 text-right">{formatAmount(visibleTotals.total_taxable)}</td>
                     <td className="p-3 text-right text-emerald-700 dark:text-emerald-400">
-                      {formatCurrency(visibleTotals.total_cgst)}
+                      {formatAmount(visibleTotals.total_cgst)}
                     </td>
                     <td className="p-3 text-right text-emerald-700 dark:text-emerald-400">
-                      {formatCurrency(visibleTotals.total_sgst)}
+                      {formatAmount(visibleTotals.total_sgst)}
                     </td>
                     <td className="p-3 text-right text-blue-700 dark:text-blue-400">
-                      {formatCurrency(visibleTotals.total_igst)}
+                      {formatAmount(visibleTotals.total_igst)}
                     </td>
                     <td className="p-3 text-right text-[var(--ember-primary)] font-extrabold text-sm">
-                      {formatCurrency(visibleTotals.total_value)}
+                      {formatAmount(visibleTotals.total_value)}
                     </td>
                     <td className="p-3 text-right">100.00%</td>
                   </tr>
@@ -661,9 +661,9 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                     <th className="p-3">Customer Name</th>
                     <th className="p-3 text-right">Invoices</th>
                     <th className="p-3 text-center">Last Invoice Date</th>
-                    <th className="p-3 text-right">Taxable Value (₹)</th>
-                    <th className="p-3 text-right">GST Amount (₹)</th>
-                    <th className="p-3 text-right">Gross Total (₹)</th>
+                    <th className="p-3 text-right">Taxable Value</th>
+                    <th className="p-3 text-right">GST Amount</th>
+                    <th className="p-3 text-right">Gross Total</th>
                     <th className="p-3 text-right">Contribution %</th>
                   </tr>
                 </thead>
@@ -699,13 +699,13 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                           {formatDate(row.last_invoice_date)}
                         </td>
                         <td className="p-3 text-right font-mono text-[var(--ember-text-primary)]">
-                          {formatCurrency(row.total_taxable)}
+                          {formatAmount(row.total_taxable)}
                         </td>
                         <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                          {formatCurrency(row.total_gst)}
+                          {formatAmount(row.total_gst)}
                         </td>
                         <td className="p-3 text-right font-mono font-bold text-[var(--ember-primary)]">
-                          {formatCurrency(row.total_value)}
+                          {formatAmount(row.total_value)}
                         </td>
                         <td className="p-3 text-right font-mono font-semibold text-[var(--ember-text-primary)]">
                           {formatPercent(contrib)}
@@ -750,9 +750,9 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                     <th className="p-3">Invoice No</th>
                     <th className="p-3">Date</th>
                     <th className="p-3">Status</th>
-                    <th className="p-3 text-right">Taxable Value (₹)</th>
-                    <th className="p-3 text-right">GST Amount (₹)</th>
-                    <th className="p-3 text-right">Gross Total (₹)</th>
+                    <th className="p-3 text-right">Taxable Value</th>
+                    <th className="p-3 text-right">GST Amount</th>
+                    <th className="p-3 text-right">Gross Total</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--ember-border-subtle)]">
@@ -771,12 +771,12 @@ export const CategoryWiseReportTab: React.FC<Props> = ({ dateFrom, dateTo, onIns
                           {inv.status}
                         </span>
                       </td>
-                      <td className="p-3 text-right font-mono">{formatCurrency(inv.total_taxable)}</td>
+                      <td className="p-3 text-right font-mono">{formatAmount(inv.total_taxable)}</td>
                       <td className="p-3 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                        {formatCurrency(inv.total_tax)}
+                        {formatAmount(inv.total_tax)}
                       </td>
                       <td className="p-3 text-right font-mono font-bold text-[var(--ember-primary)]">
-                        {formatCurrency(inv.total_value)}
+                        {formatAmount(inv.total_value)}
                       </td>
                     </tr>
                   ))}

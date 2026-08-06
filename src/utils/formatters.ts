@@ -14,6 +14,17 @@ export function formatCurrency(value: number | null | undefined): string {
 }
 
 /**
+ * Format numeric amount without currency symbol (e.g. 1,25,400.50)
+ */
+export function formatAmount(value: number | null | undefined): string {
+  if (value === null || value === undefined || isNaN(value)) return "0.00";
+  return value.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
  * Format numbers with commas according to Indian numbering system
  */
 export function formatNumber(value: number | bigint | null | undefined): string {
