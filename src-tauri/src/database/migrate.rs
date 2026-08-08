@@ -638,6 +638,15 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 CREATE INDEX IF NOT EXISTS idx_invoices_cust_date ON invoices(customer_id, invoice_date);
             ",
         },
+        Migration {
+            version: 13,
+            description: "Recalculate and fix credit_note_items line item total values",
+            rebuild: false,
+            sql: "
+                UPDATE credit_note_items
+                SET total_value = assessable_value + cgst_amount + sgst_amount + igst_amount;
+            ",
+        },
     ];
 
     // 4. Apply migrations sequentially

@@ -39,7 +39,24 @@ export const CreditNoteEditModal: React.FC<CreditNoteEditModalProps> = ({
       const res = await ApiService.getCreditNoteDetails(creditNoteNumber);
       if (res) {
         setHeader(res.header);
-        setItems(res.items);
+        const sanitizedItems = res.items.map((item) => {
+          const rate_paise = Math.round(item.rate_pre_unit * 100);
+          const assessable_paise = Math.round(item.quantity * rate_paise);
+          const cgst_paise = Math.round((assessable_paise * item.cgst_rate) / 100);
+          const sgst_paise = Math.round((assessable_paise * item.sgst_rate) / 100);
+          const igst_paise = Math.round((assessable_paise * item.igst_rate) / 100);
+          const total_paise = assessable_paise + cgst_paise + sgst_paise + igst_paise;
+
+          return {
+            ...item,
+            assessable_value: assessable_paise / 100,
+            cgst_amount: cgst_paise / 100,
+            sgst_amount: sgst_paise / 100,
+            igst_amount: igst_paise / 100,
+            total_value: total_paise / 100,
+          };
+        });
+        setItems(sanitizedItems);
         setCreditNoteNo(res.header.credit_note_number);
         setRemarks(res.header.remarks || "");
         setReason(res.header.reason || "");
@@ -60,17 +77,19 @@ export const CreditNoteEditModal: React.FC<CreditNoteEditModalProps> = ({
         if (item.invoice_item_id === invoiceItemId) {
           const updated = { ...item, [field]: value };
           
-          // Re-calculate this line's assessable and tax values locally
-          const assess = updated.quantity * updated.rate_pre_unit;
-          const cgst = Math.round(assess * updated.cgst_rate) / 100;
-          const sgst = Math.round(assess * updated.sgst_rate) / 100;
-          const igst = Math.round(assess * updated.igst_rate) / 100;
-          
-          updated.assessable_value = assess;
-          updated.cgst_amount = cgst;
-          updated.sgst_amount = sgst;
-          updated.igst_amount = igst;
-          updated.total_value = assess + cgst + sgst + igst;
+          // Re-calculate this line's assessable and tax values locally using paise precision
+          const rate_paise = Math.round(updated.rate_pre_unit * 100);
+          const assessable_paise = Math.round(updated.quantity * rate_paise);
+          const cgst_paise = Math.round((assessable_paise * updated.cgst_rate) / 100);
+          const sgst_paise = Math.round((assessable_paise * updated.sgst_rate) / 100);
+          const igst_paise = Math.round((assessable_paise * updated.igst_rate) / 100);
+          const total_paise = assessable_paise + cgst_paise + sgst_paise + igst_paise;
+
+          updated.assessable_value = assessable_paise / 100;
+          updated.cgst_amount = cgst_paise / 100;
+          updated.sgst_amount = sgst_paise / 100;
+          updated.igst_amount = igst_paise / 100;
+          updated.total_value = total_paise / 100;
           return updated;
         }
         return item;
@@ -140,17 +159,19 @@ export const CreditNoteEditModal: React.FC<CreditNoteEditModalProps> = ({
 
     // Line validations
     for (const item of items) {
-      if (item.quantity > item.original_quantity) {
+      if (item.quantity > item.original_quantity + 1e-6) {
         errors[`qty_${item.invoice_item_id}`] = `Qty cannot exceed invoiced qty (${item.original_quantity})`;
       }
       
-      const orig_assess = item.original_quantity * item.original_rate_pre_unit;
-      const orig_cgst = Math.round(orig_assess * item.cgst_rate) / 100;
-      const orig_sgst = Math.round(orig_assess * item.sgst_rate) / 100;
-      const orig_igst = Math.round(orig_assess * item.igst_rate) / 100;
-      const orig_total = orig_assess + orig_cgst + orig_sgst + orig_igst;
+      const orig_rate_paise = Math.round(item.original_rate_pre_unit * 100);
+      const orig_assess_paise = Math.round(item.original_quantity * orig_rate_paise);
+      const orig_cgst_paise = Math.round((orig_assess_paise * item.cgst_rate) / 100);
+      const orig_sgst_paise = Math.round((orig_assess_paise * item.sgst_rate) / 100);
+      const orig_igst_paise = Math.round((orig_assess_paise * item.igst_rate) / 100);
+      const orig_total_paise = orig_assess_paise + orig_cgst_paise + orig_sgst_paise + orig_igst_paise;
+      const orig_total = orig_total_paise / 100;
 
-      if (item.total_value > orig_total) {
+      if (item.total_value > orig_total + 0.01) {
         errors[`total_${item.invoice_item_id}`] = `Total (₹${item.total_value.toFixed(2)}) cannot exceed invoiced line total (₹${orig_total.toFixed(2)})`;
       }
     }

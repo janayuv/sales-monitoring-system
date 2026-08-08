@@ -189,7 +189,7 @@ impl CreditNoteService {
                 sgst_amount: sgst_a,
                 igst_rate: igst_r,
                 igst_amount: igst_a,
-                total_value: total_v,
+                total_value: assess_val + cgst_a + sgst_a + igst_a,
                 original_quantity: qty,
                 original_rate_pre_unit: rate,
                 frozen_unit_of_measure: uom_code,
