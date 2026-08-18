@@ -10,8 +10,13 @@ use crate::reports::category::models::{
     CategoryCustomerBreakdownRow, CategoryGrandTotals, CategoryReportFilter, CategorySalesRow,
 };
 use crate::reports::category::service::CategoryReportService;
+use crate::reports::hsn::models::{
+    HsnGrandTotals, HsnInvoiceBreakdownRow, HsnItemBreakdownRow, HsnReportFilter, HsnSalesRow,
+};
+use crate::reports::hsn::service::HsnReportService;
 use rusqlite::params;
 use tauri::State;
+
 
 // ======================== Report Data Models ========================
 
@@ -692,7 +697,92 @@ pub fn get_category_customer_breakdown(
     })
 }
 
+/// Get HSN Wise Sales & GST Summary Report (Level 1 Matrix)
+#[tauri::command]
+pub fn get_hsn_report(
+    state: State<'_, DbState>,
+    filter: HsnReportFilter,
+) -> Result<ReportResult<HsnSalesRow, HsnGrandTotals, HsnReportFilter>, AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let ctx = ReportContext {
+        conn,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        user_name: Some("System User".to_string()),
+    };
+
+    HsnReportService::generate_report(&ctx, filter).map_err(|e| AppError::Db {
+        code: "ERR_REP_HSN_001".to_string(),
+        message: e.to_string(),
+    })
+}
+
+/// Get HSN Item Breakdown (Level 2 Drilldown)
+#[tauri::command]
+pub fn get_hsn_item_breakdown(
+    state: State<'_, DbState>,
+    filter: HsnReportFilter,
+    hsn_code: String,
+) -> Result<Vec<HsnItemBreakdownRow>, AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let ctx = ReportContext {
+        conn,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        user_name: Some("System User".to_string()),
+    };
+
+    HsnReportService::get_item_breakdown(&ctx, filter, &hsn_code).map_err(|e| AppError::Db {
+        code: "ERR_REP_HSN_002".to_string(),
+        message: e.to_string(),
+    })
+}
+
+/// Get HSN Invoice Line Items Breakdown (Level 3 Drilldown)
+#[tauri::command]
+pub fn get_hsn_invoice_breakdown(
+    state: State<'_, DbState>,
+    filter: HsnReportFilter,
+    hsn_code: String,
+    part_code: Option<String>,
+) -> Result<Vec<HsnInvoiceBreakdownRow>, AppError> {
+    let conn_guard = state
+        .conn
+        .lock()
+        .map_err(|e| AppError::Internal(format!("Failed to acquire connection lock: {}", e)))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let ctx = ReportContext {
+        conn,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        user_name: Some("System User".to_string()),
+    };
+
+    HsnReportService::get_invoice_breakdown(&ctx, filter, &hsn_code, part_code.as_deref()).map_err(|e| AppError::Db {
+        code: "ERR_REP_HSN_003".to_string(),
+        message: e.to_string(),
+    })
+}
+
 // ======================== Dashboard Metrics Command ========================
+
 
 /// Load aggregated dashboard metrics, serving from the in-memory cache when
 /// warm and falling back to the materialized rollup tables (or, for

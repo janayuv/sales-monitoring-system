@@ -9,3 +9,10 @@ pub const CATEGORY_REPORT_ID: &str = "category_sales_report";
 pub const CATEGORY_REPORT_NAME: &str = "Category Wise Sales & Revenue Report";
 pub const CATEGORY_REPORT_VERSION: u32 = 1;
 pub const CATEGORY_REPORT_PERF_TARGET_10K_MS: u64 = 200;
+
+// HSN Report Constants
+pub const HSN_REPORT_ID: &str = "hsn_sales_report";
+pub const HSN_REPORT_NAME: &str = "HSN Wise Sales & GST Summary Report";
+pub const HSN_REPORT_VERSION: u32 = 1;
+pub const HSN_REPORT_PERF_TARGET_10K_MS: u64 = 200;
+

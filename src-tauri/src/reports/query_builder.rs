@@ -16,12 +16,16 @@ impl ReportQueryBuilder {
 
     /// Add a custom raw WHERE condition with optional parameter
     pub fn where_clause(&mut self, sql_condition: impl Into<String>, param: Option<Box<dyn ToSql>>) -> &mut Self {
-        self.where_conditions.push(sql_condition.into());
+        let cond = sql_condition.into();
+        if !cond.trim().is_empty() {
+            self.where_conditions.push(cond);
+        }
         if let Some(p) = param {
             self.params.push(p);
         }
         self
     }
+
 
     /// Apply standard date range and status filters from ReportFilterCommon
     pub fn apply_common_filters(&mut self, common: &ReportFilterCommon, date_column: &str, status_column: &str) -> &mut Self {

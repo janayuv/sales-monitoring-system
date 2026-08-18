@@ -79,6 +79,61 @@ export class ReportExportService {
   }
 
   /**
+   * Export GSTR-1 Table 12 HSN Summary CSV (Direct Government Format)
+   */
+  static async exportGstr1Table12Csv(
+    rows: Array<{
+      hsn_code: string;
+      description?: string | null;
+      uom_code?: string | null;
+      total_quantity: number;
+      total_value: number;
+      total_taxable: number;
+      total_igst: number;
+      total_cgst: number;
+      total_sgst: number;
+    }>,
+    filenamePrefix: string = "GSTR1_Table12_HSN_Summary"
+  ): Promise<boolean> {
+    try {
+      const lines: string[] = [];
+      // GSTR-1 Table 12 Header
+      lines.push('"HSN","Description","UQC","Total Quantity","Total Value","Taxable Value","Integrated Tax Amount","Central Tax Amount","State/UT Tax Amount","Cess Amount"');
+
+      for (const r of rows) {
+        const hsn = (r.hsn_code || "").replace(/"/g, '""');
+        const desc = (r.description || "").replace(/"/g, '""');
+        const uqc = (r.uom_code || "OTH").replace(/"/g, '""');
+        const qty = r.total_quantity || 0;
+        const totalVal = (r.total_value || 0).toFixed(2);
+        const taxableVal = (r.total_taxable || 0).toFixed(2);
+        const igst = (r.total_igst || 0).toFixed(2);
+        const cgst = (r.total_cgst || 0).toFixed(2);
+        const sgst = (r.total_sgst || 0).toFixed(2);
+        const cess = "0.00";
+
+        lines.push(`"${hsn}","${desc}","${uqc}",${qty},${totalVal},${taxableVal},${igst},${cgst},${sgst},${cess}`);
+      }
+
+      const csvData = lines.join("\n");
+      const savePath = await save({
+        defaultPath: `${filenamePrefix}_${new Date().toISOString().split("T")[0]}.csv`,
+        filters: [{ name: "CSV Files", extensions: ["csv"] }],
+      });
+
+      if (!savePath) return false;
+
+      await writeTextFile(savePath, csvData);
+      return true;
+    } catch (err) {
+      console.error("Failed to export GSTR-1 Table 12 CSV:", err);
+      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+
+  /**
    * Copy formatted tab-delimited text to system clipboard
    */
   static async copyToClipboard<T>(

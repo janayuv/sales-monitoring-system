@@ -36,10 +36,23 @@ import { CategoryReportFilter } from "../types/bindings/CategoryReportFilter";
 import { CategorySalesRow } from "../types/bindings/CategorySalesRow";
 import { CategoryCustomerBreakdownRow } from "../types/bindings/CategoryCustomerBreakdownRow";
 import { CategoryGrandTotals } from "../types/bindings/CategoryGrandTotals";
+import { HsnReportFilter } from "../types/bindings/HsnReportFilter";
+import { HsnSalesRow } from "../types/bindings/HsnSalesRow";
+import { HsnItemBreakdownRow } from "../types/bindings/HsnItemBreakdownRow";
+import { HsnInvoiceBreakdownRow } from "../types/bindings/HsnInvoiceBreakdownRow";
+import { HsnGrandTotals } from "../types/bindings/HsnGrandTotals";
 import { ReportResult } from "../types/bindings/ReportResult";
 import { CustomerPartRow } from "../types/bindings/CustomerPartRow";
 
+export type {
+  HsnReportFilter,
+  HsnSalesRow,
+  HsnItemBreakdownRow,
+  HsnInvoiceBreakdownRow,
+  HsnGrandTotals,
+};
 export type { CustomerPartRow };
+
 
 export type { CompanyProfileRow };
 export type { CustomerCategoryRow };
@@ -637,6 +650,47 @@ export class ApiService {
       categoryName: categoryName || "Uncategorized",
     });
   }
+
+  /**
+   * Get HSN Wise Sales & GST Summary Report (Level 1 Matrix).
+   */
+  static async getHsnReport(
+    filter: HsnReportFilter
+  ): Promise<ReportResult<HsnSalesRow, HsnGrandTotals, HsnReportFilter>> {
+    return await invoke<ReportResult<HsnSalesRow, HsnGrandTotals, HsnReportFilter>>(
+      "get_hsn_report",
+      { filter }
+    );
+  }
+
+  /**
+   * Get HSN Item Breakdown (Level 2 Drilldown).
+   */
+  static async getHsnItemBreakdown(
+    filter: HsnReportFilter,
+    hsnCode: string
+  ): Promise<HsnItemBreakdownRow[]> {
+    return await invoke<HsnItemBreakdownRow[]>("get_hsn_item_breakdown", {
+      filter,
+      hsnCode,
+    });
+  }
+
+  /**
+   * Get HSN Invoice Line Items Breakdown (Level 3 Drilldown).
+   */
+  static async getHsnInvoiceBreakdown(
+    filter: HsnReportFilter,
+    hsnCode: string,
+    partCode?: string | null
+  ): Promise<HsnInvoiceBreakdownRow[]> {
+    return await invoke<HsnInvoiceBreakdownRow[]>("get_hsn_invoice_breakdown", {
+      filter,
+      hsnCode,
+      partCode: partCode || null,
+    });
+  }
+
 
   /**
    * Load aggregated dashboard metrics.

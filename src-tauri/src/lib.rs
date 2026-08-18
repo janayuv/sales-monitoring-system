@@ -81,6 +81,9 @@ pub fn run() {
             commands::export_commands::get_dashboard_metrics,
             commands::export_commands::get_category_report,
             commands::export_commands::get_category_customer_breakdown,
+            commands::export_commands::get_hsn_report,
+            commands::export_commands::get_hsn_item_breakdown,
+            commands::export_commands::get_hsn_invoice_breakdown,
             // Customer Master & Category Module
             commands::customer_commands::get_customer_master,
             commands::customer_commands::get_customer_categories,

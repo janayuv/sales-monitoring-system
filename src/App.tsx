@@ -40,7 +40,9 @@ import {
 import { ApiService } from "./services/api";
 import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
 import { CategoryWiseReportTab } from "./components/CategoryReport/CategoryWiseReportTab";
+import { HsnWiseReportTab } from "./components/HsnReport/HsnWiseReportTab";
 import { ImportPreview } from "./types/bindings/ImportPreview";
+
 
 import { ImportTemplateRow } from "./types/bindings/ImportTemplateRow";
 import { InvoiceSummary } from "./types/bindings/InvoiceSummary";
@@ -194,8 +196,9 @@ function App() {
   const [includeDeletedCreditNotes, setIncludeDeletedCreditNotes] = useState(false);
 
   // Reports & Export States
-  const [reportSubTab, setReportSubTab] = useState<"export" | "categories" | "monthly" | "gst" | "customers" | "items">("export");
+  const [reportSubTab, setReportSubTab] = useState<"export" | "categories" | "hsn" | "monthly" | "gst" | "customers" | "items">("export");
   const [reportDateFrom, setReportDateFrom] = useState("");
+
   const [reportDateTo, setReportDateTo] = useState("");
   const [exportFormat, setExportFormat] = useState<"tally" | "excel" | "csv" | "einvoice_json">("tally");
   const [isExporting, setIsExporting] = useState(false);
@@ -1857,6 +1860,17 @@ function App() {
                     Category Breakdown
                   </button>
                   <button
+                    onClick={() => setReportSubTab("hsn")}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
+                      reportSubTab === "hsn"
+                        ? "ember-btn-primary shadow-sm"
+                        : "ember-btn-secondary"
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    HSN Summary
+                  </button>
+                  <button
                     onClick={() => setReportSubTab("monthly")}
                     className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer ${
                       reportSubTab === "monthly"
@@ -2063,6 +2077,15 @@ function App() {
               {/* Sub-Tab 1.5: Category Wise Sales Breakdown */}
               {reportSubTab === "categories" && (
                 <CategoryWiseReportTab
+                  dateFrom={reportDateFrom}
+                  dateTo={reportDateTo}
+                  onInspectInvoice={handleStartEditInspector}
+                />
+              )}
+
+              {/* Sub-Tab 1.6: HSN Wise Sales & GST Summary Report */}
+              {reportSubTab === "hsn" && (
+                <HsnWiseReportTab
                   dateFrom={reportDateFrom}
                   dateTo={reportDateTo}
                   onInspectInvoice={handleStartEditInspector}

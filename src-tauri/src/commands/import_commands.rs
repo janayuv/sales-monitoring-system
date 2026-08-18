@@ -410,8 +410,13 @@ pub fn commit_import_batch(
         success_count += 1;
     }
 
+    let mut affected_fy_ids = std::collections::HashSet::new();
+    affected_fy_ids.insert(active_fy_id);
+
     // Flush buffers into database transactions
     for (inv_no, mut header) in invoice_headers_buffer {
+        affected_fy_ids.insert(header.financial_year_id);
+
         // Imported invoices default to "Imported" status for immediate active visibility
         header.status = "Imported".to_string();
         header.total_taxable = (header.total_taxable * 100.0).round() / 100.0;
@@ -429,18 +434,33 @@ pub fn commit_import_batch(
             code: "ERR_DB_003".to_string(),
             message: format!("Failed to clear old invoice lines: {}", e),
         })?;
-        tx.execute("DELETE FROM invoices WHERE invoice_number = ?", [&inv_no])
-            .map_err(|e| AppError::Db {
-                code: "ERR_DB_003".to_string(),
-                message: format!("Failed to clear old invoice header: {}", e),
-            })?;
 
-        // Re-insert header
+        // Insert or update invoice header via UPSERT (avoiding DELETE which breaks foreign key constraints on linked credit/debit notes)
         tx.execute(
             "INSERT INTO invoices (invoice_number, invoice_date, customer_id, financial_year_id,
                                   total_taxable, total_cgst, total_sgst, total_igst, total_cess, total_value,
                                   reverse_charge, invoice_type, status, import_batch_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(invoice_number) DO UPDATE SET
+                invoice_date = excluded.invoice_date,
+                customer_id = excluded.customer_id,
+                financial_year_id = excluded.financial_year_id,
+                total_taxable = excluded.total_taxable,
+                total_cgst = excluded.total_cgst,
+                total_sgst = excluded.total_sgst,
+                total_igst = excluded.total_igst,
+                total_cess = excluded.total_cess,
+                total_value = excluded.total_value,
+                reverse_charge = COALESCE(excluded.reverse_charge, invoices.reverse_charge),
+                invoice_type = COALESCE(excluded.invoice_type, invoices.invoice_type),
+                status = CASE 
+                    WHEN invoices.status IN ('Cancelled', 'Credit Note Generated', 'Debit Note Generated', 'Posted', 'Closed') 
+                    THEN invoices.status 
+                    ELSE excluded.status 
+                END,
+                import_batch_id = excluded.import_batch_id,
+                updated_at = datetime('now'),
+                version = invoices.version + 1",
             params![
                 header.invoice_number,
                 header.invoice_date,
@@ -493,11 +513,13 @@ pub fn commit_import_batch(
         }
     }
 
-    // Rebuild materialized summary rollups for the active financial year (Phase 5 rollup)
+    // Rebuild materialized summary rollups for all affected financial years (Phase 5 rollup)
     let report_repo = SqliteReportRepository;
-    report_repo.refresh_monthly_summary(&tx, active_fy_id)?;
-    report_repo.refresh_customer_summary(&tx, active_fy_id)?;
-    report_repo.refresh_supplier_summary(&tx, active_fy_id)?;
+    for fy_id in affected_fy_ids {
+        report_repo.refresh_monthly_summary(&tx, fy_id)?;
+        report_repo.refresh_customer_summary(&tx, fy_id)?;
+        report_repo.refresh_supplier_summary(&tx, fy_id)?;
+    }
 
     // Update batch status to completed
     tx.execute(

@@ -377,3 +377,120 @@ fn test_property_based_calculations_fuzz() {
         assert!((item.total_value - computed_sum).abs() < 0.01);
     }
 }
+
+#[test]
+fn test_reimport_invoice_preserves_foreign_key_relations() {
+    let conn = setup_test_db();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+
+    // 1. Seed invoice
+    InvoiceBuilder::new("INV-FK-01")
+        .with_status("Cancelled")
+        .with_item("PART-A", 10.0, 100.0, 18.0)
+        .build(&conn);
+
+    // 2. Create Credit Note linked to this invoice (establishing FK reference with ON DELETE RESTRICT)
+    let cn_no = CreditNoteService::generate_credit_note(
+        &conn,
+        "INV-FK-01",
+        "2026-07-29",
+        Some("Initial credit note".to_string()),
+        Some("Rate difference".to_string()),
+        "Tester",
+    ).unwrap();
+
+    assert_eq!(cn_no, "CN-INV-FK-01");
+
+    // 3. Simulate re-importing/updating the invoice with new values
+    let tx = conn.unchecked_transaction().unwrap();
+
+    // Delete old lines
+    tx.execute(
+        "DELETE FROM invoice_items WHERE invoice_number = ?",
+        ["INV-FK-01"],
+    ).unwrap();
+
+    // Perform UPSERT on invoices
+    tx.execute(
+        "INSERT INTO invoices (invoice_number, invoice_date, customer_id, financial_year_id,
+                              total_taxable, total_cgst, total_sgst, total_igst, total_cess, total_value,
+                              reverse_charge, invoice_type, status, import_batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(invoice_number) DO UPDATE SET
+            invoice_date = excluded.invoice_date,
+            customer_id = excluded.customer_id,
+            financial_year_id = excluded.financial_year_id,
+            total_taxable = excluded.total_taxable,
+            total_cgst = excluded.total_cgst,
+            total_sgst = excluded.total_sgst,
+            total_igst = excluded.total_igst,
+            total_cess = excluded.total_cess,
+            total_value = excluded.total_value,
+            reverse_charge = COALESCE(excluded.reverse_charge, invoices.reverse_charge),
+            invoice_type = COALESCE(excluded.invoice_type, invoices.invoice_type),
+            status = CASE 
+                WHEN invoices.status IN ('Cancelled', 'Credit Note Generated', 'Debit Note Generated', 'Posted', 'Closed') 
+                THEN invoices.status 
+                ELSE excluded.status 
+            END,
+            import_batch_id = excluded.import_batch_id,
+            updated_at = datetime('now'),
+            version = invoices.version + 1",
+        rusqlite::params![
+            "INV-FK-01",
+            "2026-07-29",
+            101,
+            2,
+            2000.0,
+            180.0,
+            180.0,
+            0.0,
+            0.0,
+            2360.0,
+            "N",
+            "Regular B2B",
+            "Imported",
+            Option::<i64>::None,
+        ],
+    ).unwrap();
+
+    // Insert updated line items
+    tx.execute(
+        "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
+                                    cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            "INV-FK-01",
+            "PART-A",
+            20.0,
+            100.0,
+            2000.0,
+            9.0,
+            180.0,
+            9.0,
+            180.0,
+            0.0,
+            0.0,
+            2360.0
+        ],
+    ).unwrap();
+
+    tx.commit().unwrap();
+
+    // 4. Verify invoice was updated without breaking foreign key relations
+    let (total_taxable, version, status): (f64, i32, String) = conn.query_row(
+        "SELECT total_taxable, version, status FROM invoices WHERE invoice_number = 'INV-FK-01'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).unwrap();
+
+    assert_eq!(total_taxable, 2000.0);
+    assert_eq!(version, 2);
+    // Status 'Credit Note Generated' is preserved
+    assert_eq!(status, "Credit Note Generated");
+
+    // 5. Verify linked credit note is still valid and accessible
+    let cn = CreditNoteService::get_credit_note_details(&conn, "CN-INV-FK-01").unwrap();
+    assert!(cn.is_some());
+}
+

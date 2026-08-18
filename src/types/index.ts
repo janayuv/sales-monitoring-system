@@ -36,3 +36,8 @@ export type * from "./bindings/ImportPreview";
 export type * from "./bindings/GstSummaryBreakdown";
 export type * from "./bindings/DashboardMetrics";
 export type * from "./bindings/InvoiceSummary";
+export type * from "./bindings/HsnReportFilter";
+export type * from "./bindings/HsnSalesRow";
+export type * from "./bindings/HsnItemBreakdownRow";
+export type * from "./bindings/HsnInvoiceBreakdownRow";
+export type * from "./bindings/HsnGrandTotals";
