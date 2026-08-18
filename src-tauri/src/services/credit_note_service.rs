@@ -162,7 +162,7 @@ impl CreditNoteService {
         let mut items = Vec::new();
         for r in item_rows {
             let (
-                inv_item_id, part_code, qty, rate, assess_val, cgst_r, cgst_a, sgst_r, sgst_a, igst_r, igst_a, total_v
+                inv_item_id, part_code, qty, rate, assess_val, cgst_r, cgst_a, sgst_r, sgst_a, igst_r, igst_a, _total_v
             ) = r.map_err(|e| AppError::Db {
                 code: "ERR_DB_003".to_string(),
                 message: format!("Failed to parse invoice item: {}", e),

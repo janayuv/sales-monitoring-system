@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ApiService } from "../../services/api";
+import { CustomerPartRow } from "../../types/bindings/CustomerPartRow";
 import { DebitNotePrintView } from "./DebitNotePrintView";
+import { EditDebitNoteModal } from "./EditDebitNoteModal";
 import {
   FileText,
   PlusCircle,
@@ -23,6 +25,9 @@ import {
   Upload,
   Download,
   Printer,
+  Package,
+  RotateCcw,
+  Edit3,
 } from "lucide-react";
 
 interface CustomerDebitNotesTabProps {
@@ -32,10 +37,16 @@ interface CustomerDebitNotesTabProps {
 export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ onNotify }) => {
   const [activeTab, setActiveTab] = useState<"WIZARD" | "HISTORY" | "MASTER" | "REPORTS">("WIZARD");
   const [printViewData, setPrintViewData] = useState<{ header: any; items: any[] } | null>(null);
+  const [editModalData, setEditModalData] = useState<{ debitNote: any; items: any[] } | null>(null);
+  const [loadingEditId, setLoadingEditId] = useState<number | null>(null);
 
-  
   // Master data state
   const [customers, setCustomers] = useState<any[]>([]);
+
+  // Customer Parts State for Wizard
+  const [customerParts, setCustomerParts] = useState<CustomerPartRow[]>([]);
+  const [allItems, setAllItems] = useState<CustomerPartRow[]>([]);
+  const [loadingParts, setLoadingParts] = useState<boolean>(false);
 
   // Wizard state (8 Steps)
   const [step, setStep] = useState<number>(1);
@@ -61,10 +72,69 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
   const [periodTo, setPeriodTo] = useState<string>(new Date().toISOString().substring(0, 10));
   const [excludedItemIds] = useState<number[]>([]);
 
-  // Step 6 & 7: Simulation Result
+  // Step 6 & 7: Simulation Result & Exclusions
   const [simulation, setSimulation] = useState<any | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [wizardExcludedIndices, setWizardExcludedIndices] = useState<Set<number>>(new Set());
+
+  const toggleWizardExcludeLine = (idx: number) => {
+    setWizardExcludedIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) {
+        next.delete(idx);
+      } else {
+        next.add(idx);
+      }
+      return next;
+    });
+  };
+
+  const restoreAllWizardLines = () => {
+    setWizardExcludedIndices(new Set());
+  };
+
+  const wizardKpis = useMemo(() => {
+    if (!simulation?.items) {
+      return {
+        totalInvoices: 0,
+        totalQuantity: 0,
+        totalTaxable: 0,
+        totalCgst: 0,
+        totalSgst: 0,
+        totalIgst: 0,
+        totalGst: 0,
+        grandTotal: 0,
+        retainedCount: 0,
+        excludedCount: 0,
+        retainedItems: [],
+      };
+    }
+
+    const retained = simulation.items.filter((_: any, idx: number) => !wizardExcludedIndices.has(idx));
+    const uniqueInvoices = new Set(retained.map((r: any) => r.invoice_number)).size;
+    const totalQuantity = retained.reduce((acc: number, r: any) => acc + (Number(r.recovered_qty) || 0), 0);
+    const totalTaxable = retained.reduce((acc: number, r: any) => acc + (Number(r.assessable_difference) || 0), 0);
+    const totalCgst = retained.reduce((acc: number, r: any) => acc + (Number(r.cgst_amount) || 0), 0);
+    const totalSgst = retained.reduce((acc: number, r: any) => acc + (Number(r.sgst_amount) || 0), 0);
+    const totalIgst = retained.reduce((acc: number, r: any) => acc + (Number(r.igst_amount) || 0), 0);
+    const totalGst = totalCgst + totalSgst + totalIgst;
+    const grandTotal = retained.reduce((acc: number, r: any) => acc + (Number(r.total_difference) || 0), 0);
+
+    return {
+      totalInvoices: uniqueInvoices,
+      totalQuantity,
+      totalTaxable,
+      totalCgst,
+      totalSgst,
+      totalIgst,
+      totalGst,
+      grandTotal,
+      retainedCount: retained.length,
+      excludedCount: wizardExcludedIndices.size,
+      retainedItems: retained,
+    };
+  }, [simulation, wizardExcludedIndices]);
 
   // History state
   const [debitNotes, setDebitNotes] = useState<any[]>([]);
@@ -111,6 +181,90 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
     } catch (err: any) {
       console.error(err);
     }
+  };
+
+  const selectedCustomer = useMemo(() => {
+    return customers.find((c) => c.id === selectedCustomerId) || null;
+  }, [customers, selectedCustomerId]);
+
+  const loadCustomerPartsForWizard = async (custId: number) => {
+    if (!custId) {
+      setCustomerParts([]);
+      return;
+    }
+    setLoadingParts(true);
+    try {
+      const [parts, all] = await Promise.all([
+        ApiService.getCustomerParts(custId),
+        ApiService.getAllItems().catch(() => []),
+      ]);
+      setCustomerParts(parts || []);
+      setAllItems(all || []);
+    } catch (err: any) {
+      console.error("Failed to load customer parts:", err);
+    } finally {
+      setLoadingParts(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedCustomerId) {
+      loadCustomerPartsForWizard(Number(selectedCustomerId));
+    } else {
+      setCustomerParts([]);
+    }
+  }, [selectedCustomerId]);
+
+  const [manualInputMap, setManualInputMap] = useState<{ [idx: number]: boolean }>({});
+
+  const handleProceedToPriceRevision = () => {
+    if (!selectedCustomerId) return;
+    setStep(2);
+    if (revisionItems.length === 0) {
+      setRevisionItems([{ part_number: "", old_price: 0, new_price: 0 }]);
+    }
+  };
+
+  const handlePartNumberChange = (idx: number, rawVal: string) => {
+    if (rawVal === "__MANUAL__") {
+      setManualInputMap((prev) => ({ ...prev, [idx]: true }));
+      const copy = [...revisionItems];
+      copy[idx].part_number = "";
+      copy[idx].old_price = 0;
+      copy[idx].new_price = 0;
+      copy[idx].remarks = "";
+      setRevisionItems(copy);
+      return;
+    }
+
+    const val = rawVal.toUpperCase();
+    const copy = [...revisionItems];
+    copy[idx].part_number = val;
+
+    if (!val) {
+      copy[idx].old_price = 0;
+      copy[idx].new_price = 0;
+      copy[idx].remarks = "";
+      setRevisionItems(copy);
+      return;
+    }
+
+    // Find matched part in customerParts or allItems
+    const matched =
+      customerParts.find((p) => p.part_number.toUpperCase() === val) ||
+      allItems.find((p) => p.part_number.toUpperCase() === val);
+
+    if (matched) {
+      copy[idx].old_price = matched.current_price;
+      if (!copy[idx].new_price || copy[idx].new_price === 0) {
+        copy[idx].new_price = matched.current_price;
+      }
+      if (matched.part_description) {
+        copy[idx].remarks = matched.part_description;
+      }
+    }
+
+    setRevisionItems(copy);
   };
 
   const downloadTemplate = async () => {
@@ -194,6 +348,7 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
         excludedItemIds
       );
       setSimulation(res);
+      setWizardExcludedIndices(new Set());
       setStep(7);
       onNotify?.("Simulation calculated successfully", "success");
     } catch (err: any) {
@@ -204,8 +359,8 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
   };
 
   const handleGenerate = async () => {
-    if (!simulation || simulation.items.length === 0) {
-      onNotify?.("No recoverable lines found for generation", "error");
+    if (!simulation || wizardKpis.retainedCount === 0) {
+      onNotify?.("Cannot generate Debit Note with zero invoice lines. Retain at least one invoice line.", "error");
       return;
     }
 
@@ -223,12 +378,13 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
         remarks || null,
         `idempotency-${Date.now()}`,
         "Admin User",
-        simulation.items
+        wizardKpis.retainedItems
       );
       onNotify?.(`Customer Debit Note ${dn.debit_note_no} generated successfully!`, "success");
       await loadDebitNotes();
       setActiveTab("HISTORY");
       setStep(1);
+      setWizardExcludedIndices(new Set());
     } catch (err: any) {
       onNotify?.(`Generation failed: ${err.message || err}`, "error");
     } finally {
@@ -255,6 +411,28 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
     }
   };
 
+  const handleOpenEditModal = async (id: number) => {
+    setLoadingEditId(id);
+    try {
+      const details = await ApiService.getCustomerDebitNoteDetails(id);
+      setEditModalData({ debitNote: details[0], items: details[1] });
+    } catch (err: any) {
+      onNotify?.(`Failed to load Debit Note for editing: ${err.message || err}`, "error");
+    } finally {
+      setLoadingEditId(null);
+    }
+  };
+
+  const handleDebitNoteSaved = async (updatedDebitNote: any) => {
+    await loadDebitNotes();
+    if (selectedDN?.id === updatedDebitNote.id) {
+      await handleViewDetails(updatedDebitNote.id);
+    }
+    if (printViewData?.header?.id === updatedDebitNote.id) {
+      const details = await ApiService.getCustomerDebitNoteDetails(updatedDebitNote.id);
+      setPrintViewData({ header: details[0], items: details[1] });
+    }
+  };
 
   const handleStatusChange = async (id: number, status: string, action: string) => {
     try {
@@ -450,6 +628,23 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
                 </select>
               </div>
 
+              {selectedCustomerId && (
+                <div className="p-3 bg-[var(--ember-surface-raised)] border border-[var(--ember-border)] rounded-xl text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Package className="w-4 h-4 text-[var(--ember-primary)]" />
+                    <span className="text-[var(--ember-text-secondary)] font-medium">Customer Parts:</span>
+                    <span className="font-bold text-[var(--ember-text-primary)]">
+                      {loadingParts ? "Scanning invoices & price master..." : `${customerParts.length} Part(s) found in system`}
+                    </span>
+                  </div>
+                  {customerParts.length > 0 && (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                      Auto-ready for revision
+                    </span>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-[var(--ember-text-secondary)] mb-2">Currency</label>
@@ -477,7 +672,7 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
 
               <button
                 disabled={!selectedCustomerId}
-                onClick={() => setStep(2)}
+                onClick={handleProceedToPriceRevision}
                 className="w-full py-3.5 bg-[var(--ember-primary)] hover:bg-[var(--ember-primary-hover)] disabled:opacity-40 text-white font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 Proceed to Price Revision Input <ChevronRight className="w-5 h-5" />
@@ -488,11 +683,24 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
           {/* STEP 2 & 3: Price Revision Items */}
           {(step === 2 || step === 3) && (
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold font-serif text-[var(--ember-text-primary)] flex items-center gap-2">
-                  <DollarSign className="text-[var(--ember-primary)]" /> Step 2: Revised Selling Prices Input
-                </h2>
-                <div className="flex gap-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold font-serif text-[var(--ember-text-primary)] flex items-center gap-2">
+                    <DollarSign className="text-[var(--ember-primary)]" /> Step 2: Revised Selling Prices Input
+                  </h2>
+                  {selectedCustomer && (
+                    <p className="text-xs text-[var(--ember-text-muted)] mt-1 flex items-center gap-2 flex-wrap">
+                      <span>Customer: <strong className="text-[var(--ember-text-secondary)]">{selectedCustomer.report_name}</strong></span>
+                      <span>({selectedCustomer.customer_code || `ID: ${selectedCustomerId}`})</span>
+                      <span>•</span>
+                      <span className="inline-flex items-center gap-1 font-semibold text-[var(--ember-primary)]">
+                        <Package className="w-3.5 h-3.5" />
+                        {customerParts.length} Part(s) Available for Selection
+                      </span>
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2.5">
                   <button
                     onClick={downloadTemplate}
                     className="px-3.5 py-1.5 bg-[var(--ember-surface-raised)] hover:bg-[var(--ember-border-subtle)] text-xs font-semibold text-[var(--ember-text-primary)] rounded-lg flex items-center gap-1.5 border border-[var(--ember-border)] transition-colors cursor-pointer"
@@ -585,21 +793,87 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
                   <tbody className="divide-y divide-[var(--ember-border)]">
                     {revisionItems.map((item, idx) => {
                       const diff = item.new_price - item.old_price;
+                      const matchedPart =
+                        customerParts.find((p) => p.part_number.toUpperCase() === item.part_number.toUpperCase()) ||
+                        allItems.find((p) => p.part_number.toUpperCase() === item.part_number.toUpperCase());
+
                       return (
                         <tr key={idx} className="hover:bg-[var(--ember-surface-raised)]/40">
                           <td className="p-3 text-[var(--ember-text-muted)] font-bold">{idx + 1}</td>
-                          <td className="p-3">
-                            <input
-                              type="text"
-                              value={item.part_number}
-                              onChange={(e) => {
-                                const copy = [...revisionItems];
-                                copy[idx].part_number = e.target.value.toUpperCase();
-                                setRevisionItems(copy);
-                              }}
-                              placeholder="e.g. PART-1001"
-                              className="w-full ember-input px-2.5 py-1.5 text-sm uppercase font-mono"
-                            />
+                          <td className="p-3 min-w-[280px]">
+                            <div className="space-y-1">
+                              {manualInputMap[idx] ? (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={item.part_number}
+                                    onChange={(e) => handlePartNumberChange(idx, e.target.value)}
+                                    placeholder="e.g. PART-1001"
+                                    className="w-full ember-input px-2.5 py-1.5 text-sm uppercase font-mono"
+                                    autoFocus
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setManualInputMap((prev) => {
+                                        const copy = { ...prev };
+                                        delete copy[idx];
+                                        return copy;
+                                      });
+                                    }}
+                                    className="text-xs text-[var(--ember-text-muted)] hover:text-[var(--ember-text-primary)] px-2 py-1 bg-[var(--ember-surface-raised)] border border-[var(--ember-border)] rounded whitespace-nowrap cursor-pointer"
+                                    title="Switch back to dropdown list"
+                                  >
+                                    List
+                                  </button>
+                                </div>
+                              ) : (
+                                <select
+                                  value={item.part_number}
+                                  onChange={(e) => handlePartNumberChange(idx, e.target.value)}
+                                  className="w-full ember-input px-3 py-2 text-sm font-mono cursor-pointer font-medium"
+                                >
+                                  <option value="">-- Select Part Number --</option>
+                                  {customerParts.length > 0 && (
+                                    <optgroup label={`Customer Parts (${customerParts.length})`}>
+                                      {customerParts.map((p) => (
+                                        <option key={`cp-${p.part_number}`} value={p.part_number}>
+                                          {p.part_number} {p.part_description ? `— ${p.part_description}` : ""} (Current: ₹{p.current_price.toFixed(2)})
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  )}
+                                  {allItems.filter((ai) => !customerParts.some((cp) => cp.part_number.toUpperCase() === ai.part_number.toUpperCase())).length > 0 && (
+                                    <optgroup label="Other Catalog Parts">
+                                      {allItems
+                                        .filter((ai) => !customerParts.some((cp) => cp.part_number.toUpperCase() === ai.part_number.toUpperCase()))
+                                        .map((ai) => (
+                                          <option key={`all-${ai.part_number}`} value={ai.part_number}>
+                                            {ai.part_number} {ai.part_description ? `— ${ai.part_description}` : ""}
+                                          </option>
+                                        ))}
+                                    </optgroup>
+                                  )}
+                                  {item.part_number &&
+                                    !customerParts.some((cp) => cp.part_number.toUpperCase() === item.part_number.toUpperCase()) &&
+                                    !allItems.some((ai) => ai.part_number.toUpperCase() === item.part_number.toUpperCase()) && (
+                                      <option value={item.part_number}>{item.part_number} [Custom]</option>
+                                    )}
+                                  <option value="__MANUAL__">+ Type Custom Part Code...</option>
+                                </select>
+                              )}
+
+                              {matchedPart && (
+                                <div className="text-[11px] text-[var(--ember-text-muted)] flex items-center gap-1.5 truncate px-1">
+                                  <span className="truncate">{matchedPart.part_description || "Part"}</span>
+                                  {matchedPart.source && (
+                                    <span className="px-1.5 py-0.2 text-[9px] rounded font-semibold bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] border border-[var(--ember-border)] shrink-0">
+                                      {matchedPart.source}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3">
                             <input
@@ -721,42 +995,75 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
                     <ShieldCheck className="text-emerald-600 dark:text-emerald-400" /> Step 7: Simulation Board & Metrics
                   </h2>
                   <p className="text-xs text-[var(--ember-text-muted)] mt-1">
-                    Matching invoice lines preview before frozen debit note generation.
+                    Matching invoice lines preview before frozen debit note generation. You can exclude unwanted lines.
                   </p>
                 </div>
                 <button
                   onClick={handleGenerate}
-                  disabled={generating}
+                  disabled={generating || wizardKpis.retainedCount === 0}
                   className="px-6 py-3 bg-[var(--ember-primary)] hover:bg-[var(--ember-primary-hover)] disabled:opacity-40 text-white font-bold rounded-xl shadow-md flex items-center gap-2 text-sm cursor-pointer transition-all"
                 >
                   {generating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-                  Generate Debit Note & Annexure CDN-A
+                  Generate Debit Note & Annexure CDN-A ({wizardKpis.retainedCount})
                 </button>
               </div>
 
               {/* KPI Cards */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="ember-card p-4 bg-[var(--ember-bg)]">
+                <div className="ember-card p-4 bg-[var(--ember-bg)] border border-[var(--ember-border)]">
                   <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Total Invoices</div>
-                  <div className="text-xl font-bold font-serif text-[var(--ember-text-primary)] mt-1">{simulation.total_invoices}</div>
-                </div>
-                <div className="ember-card p-4 bg-[var(--ember-bg)]">
-                  <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Total Quantity</div>
-                  <div className="text-xl font-bold font-serif text-[var(--ember-text-primary)] mt-1">{simulation.total_quantity.toLocaleString()}</div>
-                </div>
-                <div className="ember-card p-4 bg-[var(--ember-bg)]">
-                  <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Taxable Diff</div>
-                  <div className="text-xl font-bold font-serif text-emerald-600 dark:text-emerald-400 mt-1">₹{simulation.total_taxable.toFixed(2)}</div>
-                </div>
-                <div className="ember-card p-4 bg-[var(--ember-bg)]">
-                  <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">GST Amount</div>
-                  <div className="text-xl font-bold font-serif text-[var(--ember-primary)] mt-1">
-                    ₹{(simulation.total_cgst + simulation.total_sgst + simulation.total_igst).toFixed(2)}
+                  <div className="text-xl font-bold font-serif text-[var(--ember-text-primary)] mt-1">
+                    {wizardKpis.totalInvoices}
+                    {wizardKpis.excludedCount > 0 && (
+                      <span className="text-xs font-normal text-[var(--ember-text-muted)] ml-1.5 line-through">
+                        ({simulation.total_invoices})
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="ember-card p-4 bg-[var(--ember-bg)]">
+                <div className="ember-card p-4 bg-[var(--ember-bg)] border border-[var(--ember-border)]">
+                  <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Total Quantity</div>
+                  <div className="text-xl font-bold font-serif text-[var(--ember-text-primary)] mt-1">
+                    {wizardKpis.totalQuantity.toLocaleString()}
+                    {wizardKpis.excludedCount > 0 && (
+                      <span className="text-xs font-normal text-[var(--ember-text-muted)] ml-1.5 line-through">
+                        ({simulation.total_quantity.toLocaleString()})
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="ember-card p-4 bg-[var(--ember-bg)] border border-[var(--ember-border)]">
+                  <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Taxable Diff</div>
+                  <div className="text-xl font-bold font-serif text-emerald-600 dark:text-emerald-400 mt-1">
+                    ₹{wizardKpis.totalTaxable.toFixed(2)}
+                    {wizardKpis.excludedCount > 0 && (
+                      <span className="text-xs font-normal text-[var(--ember-text-muted)] ml-1.5 line-through">
+                        ₹{simulation.total_taxable.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="ember-card p-4 bg-[var(--ember-bg)] border border-[var(--ember-border)]">
+                  <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">GST Amount</div>
+                  <div className="text-xl font-bold font-serif text-[var(--ember-primary)] mt-1">
+                    ₹{wizardKpis.totalGst.toFixed(2)}
+                    {wizardKpis.excludedCount > 0 && (
+                      <span className="text-xs font-normal text-[var(--ember-text-muted)] ml-1.5 line-through">
+                        ₹{(simulation.total_cgst + simulation.total_sgst + simulation.total_igst).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="ember-card p-4 bg-[var(--ember-bg)] border border-[var(--ember-border)]">
                   <div className="text-[10px] uppercase font-bold text-[var(--ember-text-muted)] tracking-wider">Grand Total</div>
-                  <div className="text-xl font-bold font-serif text-amber-600 dark:text-amber-500 mt-1">₹{simulation.grand_total.toFixed(2)}</div>
+                  <div className="text-xl font-bold font-serif text-amber-600 dark:text-amber-500 mt-1">
+                    ₹{wizardKpis.grandTotal.toFixed(2)}
+                    {wizardKpis.excludedCount > 0 && (
+                      <span className="text-xs font-normal text-[var(--ember-text-muted)] ml-1.5 line-through">
+                        ₹{simulation.grand_total.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -772,38 +1079,100 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
                 </div>
               )}
 
+              {/* Table Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div className="text-xs text-[var(--ember-text-muted)]">
+                  Showing <strong className="text-[var(--ember-text-secondary)]">{wizardKpis.retainedCount}</strong> active of {simulation.items.length} line(s)
+                  {wizardKpis.excludedCount > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400 font-semibold ml-1.5">
+                      ({wizardKpis.excludedCount} line(s) excluded from Debit Note)
+                    </span>
+                  )}
+                </div>
+                {wizardKpis.excludedCount > 0 && (
+                  <button
+                    onClick={restoreAllWizardLines}
+                    className="px-3 py-1.5 bg-[var(--ember-surface-raised)] hover:bg-[var(--ember-border-subtle)] text-xs font-semibold text-[var(--ember-text-primary)] rounded-lg flex items-center gap-1.5 border border-[var(--ember-border)] transition-colors cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-[var(--ember-primary)]" /> Restore All Excluded ({wizardKpis.excludedCount})
+                  </button>
+                )}
+              </div>
+
               {/* Matched Lines Table */}
               <div className="overflow-x-auto border border-[var(--ember-border)] rounded-xl max-h-96 bg-[var(--ember-bg)]">
                 <table className="w-full text-left text-xs text-[var(--ember-text-secondary)]">
-                  <thead className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] uppercase sticky top-0 border-b border-[var(--ember-border)] font-semibold">
+                  <thead className="bg-[var(--ember-surface-raised)] text-[var(--ember-text-secondary)] uppercase sticky top-0 border-b border-[var(--ember-border)] font-semibold z-10">
                     <tr>
                       <th className="p-3">Inv No</th>
                       <th className="p-3">Inv Date</th>
                       <th className="p-3">Part Code</th>
-                      <th className="p-3">Qty</th>
-                      <th className="p-3">Old Rate</th>
-                      <th className="p-3">New Rate</th>
-                      <th className="p-3">Diff</th>
-                      <th className="p-3">Taxable</th>
+                      <th className="p-3 text-right">Qty</th>
+                      <th className="p-3 text-right">Old Rate</th>
+                      <th className="p-3 text-right">New Rate</th>
+                      <th className="p-3 text-right">Diff</th>
+                      <th className="p-3 text-right">Taxable</th>
                       <th className="p-3">GST Type</th>
-                      <th className="p-3">Total Line</th>
+                      <th className="p-3 text-right">Total Line</th>
+                      <th className="p-3 text-center">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--ember-border)] font-mono">
-                    {simulation.items.map((row: any, idx: number) => (
-                      <tr key={idx} className="hover:bg-[var(--ember-surface-raised)]/45">
-                        <td className="p-3 font-semibold text-[var(--ember-text-primary)]">{row.invoice_number}</td>
-                        <td className="p-3 text-[var(--ember-text-muted)]">{row.invoice_date}</td>
-                        <td className="p-3 text-[var(--ember-primary)] font-bold">{row.part_code}</td>
-                        <td className="p-3 text-[var(--ember-text-primary)]">{row.recovered_qty}</td>
-                        <td className="p-3 text-[var(--ember-text-muted)]">₹{row.rate_pre_unit.toFixed(2)}</td>
-                        <td className="p-3 text-emerald-600 dark:text-emerald-400 font-bold">₹{row.new_price.toFixed(2)}</td>
-                        <td className="p-3 text-[var(--ember-primary)]">₹{row.difference.toFixed(2)}</td>
-                        <td className="p-3">₹{row.assessable_difference.toFixed(2)}</td>
-                        <td className="p-3 text-[var(--ember-text-muted)]">{row.gst_type}</td>
-                        <td className="p-3 font-bold text-amber-600 dark:text-amber-500">₹{row.total_difference.toFixed(2)}</td>
-                      </tr>
-                    ))}
+                    {simulation.items.map((row: any, idx: number) => {
+                      const isExcluded = wizardExcludedIndices.has(idx);
+
+                      return (
+                        <tr
+                          key={idx}
+                          className={`transition-colors ${
+                            isExcluded
+                              ? "bg-rose-500/5 text-[var(--ember-text-muted)] opacity-60"
+                              : "hover:bg-[var(--ember-surface-raised)]/45"
+                          }`}
+                        >
+                          <td className="p-3 font-semibold text-[var(--ember-text-primary)]">
+                            <span className={isExcluded ? "line-through" : ""}>{row.invoice_number}</span>
+                            {isExcluded && (
+                              <span className="ml-2 px-1.5 py-0.2 text-[9px] rounded font-sans bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                                Excluded
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 text-[var(--ember-text-muted)] font-sans">{row.invoice_date}</td>
+                          <td className="p-3 text-[var(--ember-primary)] font-bold">
+                            <span className={isExcluded ? "line-through" : ""}>{row.part_code}</span>
+                          </td>
+                          <td className="p-3 text-right text-[var(--ember-text-primary)]">{Number(row.recovered_qty).toLocaleString()}</td>
+                          <td className="p-3 text-right text-[var(--ember-text-muted)]">₹{Number(row.rate_pre_unit).toFixed(2)}</td>
+                          <td className="p-3 text-right text-emerald-600 dark:text-emerald-400 font-bold">₹{Number(row.new_price).toFixed(2)}</td>
+                          <td className="p-3 text-right text-[var(--ember-primary)] font-semibold">₹{Number(row.difference).toFixed(2)}</td>
+                          <td className="p-3 text-right">₹{Number(row.assessable_difference).toFixed(2)}</td>
+                          <td className="p-3 text-[var(--ember-text-muted)] font-sans">{row.gst_type}</td>
+                          <td className="p-3 text-right font-bold text-amber-600 dark:text-amber-500">₹{Number(row.total_difference).toFixed(2)}</td>
+                          <td className="p-3 text-center font-sans">
+                            {isExcluded ? (
+                              <button
+                                type="button"
+                                onClick={() => toggleWizardExcludeLine(idx)}
+                                className="px-2 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded text-xs font-semibold flex items-center gap-1 mx-auto border border-emerald-500/20 cursor-pointer"
+                                title="Restore this line for generation"
+                              >
+                                <RotateCcw className="w-3 h-3" /> Restore
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => toggleWizardExcludeLine(idx)}
+                                className="px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 rounded text-xs font-semibold flex items-center gap-1 mx-auto border border-rose-500/20 cursor-pointer"
+                                title="Exclude this invoice line from Debit Note"
+                              >
+                                <Trash2 className="w-3 h-3" /> Exclude
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -860,6 +1229,21 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
                       >
                         <Printer className="w-3.5 h-3.5" /> View Voucher
                       </button>
+                      {["Created", "Draft", "Verified", "Approved"].includes(dn.status) && (
+                        <button
+                          onClick={() => handleOpenEditModal(dn.id)}
+                          disabled={loadingEditId === dn.id}
+                          className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-lg text-xs font-bold border border-amber-500/20 cursor-pointer inline-flex items-center gap-1.5 transition-colors"
+                          title="Edit Debit Note lines"
+                        >
+                          {loadingEditId === dn.id ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Edit3 className="w-3.5 h-3.5" />
+                          )}
+                          Edit
+                        </button>
+                      )}
                       <button
                         onClick={() => handleViewDetails(dn.id)}
                         className="px-3 py-1.5 bg-[var(--ember-surface-raised)] hover:bg-[var(--ember-border-subtle)] text-[var(--ember-text-primary)] rounded-lg text-xs font-bold border border-[var(--ember-border)] cursor-pointer"
@@ -899,6 +1283,21 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
                   >
                     <Printer className="w-3.5 h-3.5" /> View Voucher
                   </button>
+                  {["Created", "Draft", "Verified", "Approved"].includes(selectedDN.status) && (
+                    <button
+                      onClick={() => handleOpenEditModal(selectedDN.id)}
+                      disabled={loadingEditId === selectedDN.id}
+                      className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold rounded-lg border border-amber-500/20 shadow-xs cursor-pointer inline-flex items-center gap-1.5 transition-colors"
+                      title="Edit Debit Note lines"
+                    >
+                      {loadingEditId === selectedDN.id ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Edit3 className="w-3.5 h-3.5" />
+                      )}
+                      Edit Lines
+                    </button>
+                  )}
                   {["Verified", "Approved", "Posted", "Locked"].map((st) => (
                     <button
                       key={st}
@@ -1091,6 +1490,16 @@ export const CustomerDebitNotesTab: React.FC<CustomerDebitNotesTabProps> = ({ on
           header={printViewData.header}
           items={printViewData.items}
           onClose={() => setPrintViewData(null)}
+        />
+      )}
+
+      {editModalData && (
+        <EditDebitNoteModal
+          debitNote={editModalData.debitNote}
+          items={editModalData.items}
+          onClose={() => setEditModalData(null)}
+          onSaved={handleDebitNoteSaved}
+          onNotify={onNotify}
         />
       )}
     </div>

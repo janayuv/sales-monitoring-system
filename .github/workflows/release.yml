@@ -88,8 +88,9 @@ jobs:
             exit 1
           fi
           PAYLOAD_NAME=$(basename "$PAYLOAD_FILE")
-          ENCODED_NAME=$(echo "$PAYLOAD_NAME" | sed 's/ /%20/g')
-          echo "Signed payload resolved: $PAYLOAD_NAME -> Encoded: $ENCODED_NAME"
+          # GitHub Releases normalizes asset filenames by replacing spaces with dots ('.')
+          ENCODED_NAME=$(echo "$PAYLOAD_NAME" | sed 's/ /./g')
+          echo "Signed payload resolved: $PAYLOAD_NAME -> Sanitized: $ENCODED_NAME"
           
           # 4. Create the manifest payload
           DOWNLOAD_URL="https://github.com/janayuv/sales-monitoring-system/releases/download/$TAG_NAME/$ENCODED_NAME"
@@ -150,7 +151,7 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/**/*.zip
             src-tauri/target/release/bundle/**/*.sig
-            *.json
+            *latest.json
           body: |
             ## Release Notes
             Sales Monitoring System release version ${{ github.ref_name }}.
@@ -180,7 +181,19 @@ jobs:
           echo "HTTP Response Code for $MANIFEST_NAME: $STATUS"
           
           if [ "$STATUS" -ne 200 ]; then
-            echo "Warning: Asset $MANIFEST_NAME returned HTTP status $STATUS. (Verify repository public visibility settings if status is 404)."
+            echo "Error: Asset $MANIFEST_NAME returned HTTP status $STATUS."
+            exit 1
           else
             echo "Asset $MANIFEST_NAME is publicly accessible and verified!"
           fi
+
+          # Extract download URL from manifest and verify executable reachability
+          DOWNLOAD_URL=$(node -e "const m = require('./$MANIFEST_NAME'); console.log(m.platforms['windows-x86_64'].url);")
+          echo "Checking reachability of installer payload: $DOWNLOAD_URL ..."
+          PAYLOAD_STATUS=$(curl -sL -w "%{http_code}" -o /dev/null "$DOWNLOAD_URL" || echo "000")
+          echo "HTTP Response Code for installer payload: $PAYLOAD_STATUS"
+          if [ "$PAYLOAD_STATUS" -ne 200 ]; then
+            echo "Error: Installer payload $DOWNLOAD_URL returned HTTP status $PAYLOAD_STATUS."
+            exit 1
+          fi
+          echo "All release assets are publicly accessible and verified!"

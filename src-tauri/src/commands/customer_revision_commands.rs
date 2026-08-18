@@ -59,6 +59,176 @@ fn log_event(
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/types/bindings/CustomerPartRow.ts")]
+pub struct CustomerPartRow {
+    pub part_number: String,
+    pub part_description: Option<String>,
+    pub current_price: f64,
+    pub source: String,
+    pub uom_code: Option<String>,
+    pub hsn_code: Option<String>,
+}
+
+/// Fetch parts associated with a customer from Price Master, Invoices, or general Item Master
+#[tauri::command]
+pub fn get_customer_parts(
+    state: State<'_, DbState>,
+    customer_id: i64,
+) -> Result<Vec<CustomerPartRow>, AppError> {
+    let conn_guard = state.conn.lock().map_err(|e| AppError::Internal(format!("lock: {e}")))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let mut parts_map: std::collections::BTreeMap<String, CustomerPartRow> = std::collections::BTreeMap::new();
+
+    // 1. Fetch from customer_price_master for active parts
+    let mut stmt_cpm = conn.prepare(
+        "SELECT cpm.part_number, i.part_name, cpm.current_price, i.uom_code, i.hsn_code
+         FROM customer_price_master cpm
+         LEFT JOIN items i ON cpm.part_number = i.part_code
+         WHERE cpm.customer_id = ? AND cpm.is_deleted = 0
+         ORDER BY cpm.part_number ASC"
+    ).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to prepare customer price master query: {e}"),
+    })?;
+
+    let cpm_rows = stmt_cpm.query_map([customer_id], |row| {
+        Ok(CustomerPartRow {
+            part_number: row.get(0)?,
+            part_description: row.get(1)?,
+            current_price: row.get(2)?,
+            source: "Price Master".to_string(),
+            uom_code: row.get(3)?,
+            hsn_code: row.get(4)?,
+        })
+    }).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to query customer price master: {e}"),
+    })?;
+
+    for r in cpm_rows {
+        if let Ok(part) = r {
+            parts_map.insert(part.part_number.clone(), part);
+        }
+    }
+
+    // 2. Fetch distinct parts and latest rate from invoice_items for this customer
+    let mut stmt_inv = conn.prepare(
+        "SELECT ii.part_code, item.part_name, ii.rate_pre_unit, item.uom_code, item.hsn_code
+         FROM invoice_items ii
+         JOIN invoices i ON ii.invoice_number = i.invoice_number
+         LEFT JOIN items item ON ii.part_code = item.part_code
+         WHERE i.customer_id = ? AND i.status NOT IN ('Draft', 'Cancelled')
+         ORDER BY i.invoice_date DESC, ii.id DESC"
+    ).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to prepare invoice items query: {e}"),
+    })?;
+
+    let inv_rows = stmt_inv.query_map([customer_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, f64>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    }).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to query customer invoice items: {e}"),
+    })?;
+
+    for r in inv_rows {
+        if let Ok((part_code, part_name, rate, uom, hsn)) = r {
+            parts_map.entry(part_code.clone()).or_insert_with(|| CustomerPartRow {
+                part_number: part_code,
+                part_description: part_name,
+                current_price: rate,
+                source: "Invoice History".to_string(),
+                uom_code: uom,
+                hsn_code: hsn,
+            });
+        }
+    }
+
+    // 3. Fallback to general items catalog if no customer-specific parts exist
+    if parts_map.is_empty() {
+        let mut stmt_items = conn.prepare(
+            "SELECT part_code, part_name, uom_code, hsn_code FROM items WHERE status = 'Approved' ORDER BY part_code ASC"
+        ).map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to prepare items master query: {e}"),
+        })?;
+
+        let items_rows = stmt_items.query_map([], |row| {
+            Ok(CustomerPartRow {
+                part_number: row.get(0)?,
+                part_description: row.get(1)?,
+                current_price: 0.0,
+                source: "Item Master".to_string(),
+                uom_code: row.get(2)?,
+                hsn_code: row.get(3)?,
+            })
+        }).map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to query items master: {e}"),
+        })?;
+
+        for r in items_rows {
+            if let Ok(part) = r {
+                parts_map.insert(part.part_number.clone(), part);
+            }
+        }
+    }
+
+    Ok(parts_map.into_values().collect())
+}
+
+/// Fetch all catalog items
+#[tauri::command]
+pub fn get_all_items(
+    state: State<'_, DbState>,
+) -> Result<Vec<CustomerPartRow>, AppError> {
+    let conn_guard = state.conn.lock().map_err(|e| AppError::Internal(format!("lock: {e}")))?;
+    let conn = conn_guard.as_ref().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    let mut stmt = conn.prepare(
+        "SELECT part_code, part_name, uom_code, hsn_code FROM items WHERE status = 'Approved' ORDER BY part_code ASC"
+    ).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to prepare items query: {e}"),
+    })?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(CustomerPartRow {
+            part_number: row.get(0)?,
+            part_description: row.get(1)?,
+            current_price: 0.0,
+            source: "Item Master".to_string(),
+            uom_code: row.get(2)?,
+            hsn_code: row.get(3)?,
+        })
+    }).map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Failed to query items: {e}"),
+    })?;
+
+    let mut list = Vec::new();
+    for r in rows {
+        if let Ok(item) = r {
+            list.push(item);
+        }
+    }
+    Ok(list)
+}
+
 /// Fetch price master entries
 #[tauri::command]
 pub fn get_customer_price_master(
@@ -761,11 +931,8 @@ pub fn simulate_customer_debit_note_recovery(
                 continue;
             }
 
-            let old_p = if rev_item.old_price > 0.0 {
-                rev_item.old_price
-            } else {
-                rate_pre_unit
-            };
+            // Always fetch the actual unit rate from the invoice line in the sales report
+            let old_p = rate_pre_unit;
 
             let diff = rev_item.new_price - old_p;
             if diff <= 0.0 {
@@ -1611,6 +1778,338 @@ pub fn update_customer_debit_note_status(
     Ok(())
 }
 
+/// Update an existing customer debit note by removing excluded invoice lines and recalculating totals.
+///
+/// Accounting & Transaction Invariants:
+/// 1. Only editable lifecycle statuses (`Created`, `Draft`, `Verified`, `Approved`) are permitted.
+/// 2. `Posted` (financial ledger posted), `Locked` (fiscal lock), and `Cancelled` notes are strictly rejected.
+/// 3. At least one invoice mapping line must remain; empty sets are rejected (user must use cancellation instead).
+/// 4. Removed mapping rows are marked `status = 'Cancelled', balance_qty = quantity` without physical deletion.
+///    This immediately releases their allocated quantity in `SUM(recovered_qty)` for subsequent revisions.
+/// 5. All monetary totals (taxable, CGST, SGST, IGST, total value, outstanding amount, journal entry,
+///    and recovery case rollup) are recalculated in integer paise within a single atomic SQLite transaction.
+#[tauri::command]
+pub fn update_customer_debit_note_lines(
+    state: State<'_, DbState>,
+    debit_note_id: i64,
+    remaining_map_ids: Vec<i64>,
+    remarks: Option<String>,
+    user_name: String,
+) -> Result<CustomerDebitNoteRow, AppError> {
+    // 1. Guard against empty line sets
+    if remaining_map_ids.is_empty() {
+        return Err(AppError::Validation {
+            code: "ERR_DN_EDIT_001".to_string(),
+            message: "Cannot remove all invoice lines. A debit note must retain at least one active invoice line. Use Cancel Debit Note instead.".to_string(),
+        });
+    }
+
+    let mut conn_guard = state.conn.lock().map_err(|e| AppError::Internal(format!("lock: {e}")))?;
+    let conn = conn_guard.as_mut().ok_or_else(|| AppError::Db {
+        code: "ERR_DB_002".to_string(),
+        message: "No active database connection profile".to_string(),
+    })?;
+
+    // 2. Begin single atomic SQLite transaction
+    let tx = conn.transaction().map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Begin update lines transaction failed: {e}"),
+    })?;
+
+    // 3. Fetch header metadata and verify lifecycle status
+    let (status, case_id, exchange_rate, debit_note_no): (String, i64, f64, String) = tx
+        .query_row(
+            "SELECT status, case_id, exchange_rate, debit_note_no FROM customer_debit_notes WHERE id = ? AND is_deleted = 0",
+            [debit_note_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Fetch debit note header failed: {e}"),
+        })?;
+
+    match status.as_str() {
+        "Created" | "Draft" | "Verified" | "Approved" => {
+            // Permitted editable statuses
+        }
+        "Posted" | "Locked" => {
+            return Err(AppError::Validation {
+                code: "ERR_DN_EDIT_002".to_string(),
+                message: format!(
+                    "Debit Note {} is in '{}' status and cannot be modified. Posted or Locked notes require formal Cancellation or Credit Note.",
+                    debit_note_no, status
+                ),
+            });
+        }
+        "Cancelled" => {
+            return Err(AppError::Validation {
+                code: "ERR_DN_EDIT_003".to_string(),
+                message: format!("Debit Note {} is Cancelled and cannot be modified.", debit_note_no),
+            });
+        }
+        other => {
+            return Err(AppError::Validation {
+                code: "ERR_DN_EDIT_004".to_string(),
+                message: format!("Debit Note {} is in '{}' status which cannot be edited.", debit_note_no, other),
+            });
+        }
+    }
+
+    // 4. Fetch all currently active (non-cancelled) line mappings for this Debit Note
+    let mut stmt_lines = tx
+        .prepare(
+            "SELECT id, invoice_number, quantity, assessable_difference, cgst_amount, sgst_amount, igst_amount, cess_amount, total_difference
+             FROM customer_debit_note_invoice_map
+             WHERE debit_note_id = ? AND status != 'Cancelled'",
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Prepare invoice map query failed: {e}"),
+        })?;
+
+    let active_lines = stmt_lines
+        .query_map([debit_note_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,    // id
+                r.get::<_, String>(1)?, // invoice_number
+                r.get::<_, f64>(2)?,    // quantity
+                r.get::<_, i64>(3)?,    // assessable_difference (paise)
+                r.get::<_, i64>(4)?,    // cgst_amount (paise)
+                r.get::<_, i64>(5)?,    // sgst_amount (paise)
+                r.get::<_, i64>(6)?,    // igst_amount (paise)
+                r.get::<_, i64>(7)?,    // cess_amount (paise)
+                r.get::<_, i64>(8)?,    // total_difference (paise)
+            ))
+        })
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Query active lines failed: {e}"),
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Read active lines failed: {e}"),
+        })?;
+
+    drop(stmt_lines);
+
+    // 5. Verify that every remaining map ID belongs to this Debit Note
+    let active_ids: std::collections::HashSet<i64> = active_lines.iter().map(|l| l.0).collect();
+    for rem_id in &remaining_map_ids {
+        if !active_ids.contains(rem_id) {
+            return Err(AppError::Validation {
+                code: "ERR_DN_EDIT_005".to_string(),
+                message: format!(
+                    "Invoice Line ID {} does not belong to active lines of Debit Note {}",
+                    rem_id, debit_note_no
+                ),
+            });
+        }
+    }
+
+    // 6. Identify removed mappings
+    let remaining_set: std::collections::HashSet<i64> = remaining_map_ids.iter().cloned().collect();
+    let removed_lines: Vec<&(i64, String, f64, i64, i64, i64, i64, i64, i64)> = active_lines
+        .iter()
+        .filter(|l| !remaining_set.contains(&l.0))
+        .collect();
+
+    // 7. Mark removed mappings as 'Cancelled' and restore balance_qty (Option A quantity release)
+    // This immediately excludes them from SUM(recovered_qty) in future allocation queries.
+    for rem in &removed_lines {
+        tx.execute(
+            "UPDATE customer_debit_note_invoice_map SET status = 'Cancelled', balance_qty = quantity WHERE id = ? AND debit_note_id = ?",
+            params![rem.0, debit_note_id],
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Cancel removed invoice mapping line {} failed: {e}", rem.0),
+        })?;
+    }
+
+    // 8. Recalculate totals from remaining active mappings in integer paise
+    let mut new_taxable_paise: i64 = 0;
+    let mut new_cgst_paise: i64 = 0;
+    let mut new_sgst_paise: i64 = 0;
+    let mut new_igst_paise: i64 = 0;
+    let mut new_cess_paise: i64 = 0;
+    let mut new_total_value_paise: i64 = 0;
+
+    for line in active_lines.iter().filter(|l| remaining_set.contains(&l.0)) {
+        new_taxable_paise += line.3;
+        new_cgst_paise += line.4;
+        new_sgst_paise += line.5;
+        new_igst_paise += line.6;
+        new_cess_paise += line.7;
+        new_total_value_paise += line.8;
+    }
+
+    let foreign_total_paise = float_to_paise(paise_to_float(new_total_value_paise) / exchange_rate);
+    let new_outstanding_paise = new_total_value_paise;
+
+    // 9. Update customer_debit_notes header record with new totals, version bump, and optional remarks
+    tx.execute(
+        "UPDATE customer_debit_notes
+         SET total_taxable = ?,
+             total_cgst = ?,
+             total_sgst = ?,
+             total_igst = ?,
+             total_cess = ?,
+             total_value = ?,
+             foreign_total_value = ?,
+             outstanding_amount = ?,
+             remarks = COALESCE(?, remarks),
+             version = version + 1
+         WHERE id = ?",
+        params![
+            new_taxable_paise,
+            new_cgst_paise,
+            new_sgst_paise,
+            new_igst_paise,
+            new_cess_paise,
+            new_total_value_paise,
+            foreign_total_paise,
+            new_outstanding_paise,
+            remarks,
+            debit_note_id
+        ],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Update debit note header totals failed: {e}"),
+    })?;
+
+    // 10. Update Accounts Receivable journal entry placeholder amount
+    tx.execute(
+        "UPDATE customer_debit_note_journal_entries
+         SET amount = ?
+         WHERE debit_note_id = ? AND entry_type = 'DEBIT' AND posting_status != 'Cancelled'",
+        params![new_total_value_paise, debit_note_id],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Update journal entry amount failed: {e}"),
+    })?;
+
+    // 11. Update Recovery Case rollup summary to reflect remaining lines
+    tx.execute(
+        "UPDATE customer_recovery_cases
+         SET total_invoices = ?,
+             total_quantity = ?,
+             total_recoverable_amount = ?,
+             recovered_amount = ?,
+             balance_amount = 0
+         WHERE id = ?",
+        params![
+            remaining_map_ids.len(),
+            new_taxable_paise,
+            new_total_value_paise,
+            new_total_value_paise,
+            case_id
+        ],
+    )
+    .map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Update recovery case rollup failed: {e}"),
+    })?;
+
+    // 12. Log audit trail event
+    let removed_inv_numbers: Vec<String> = removed_lines.iter().map(|l| l.1.clone()).collect();
+    let event_detail = if removed_lines.is_empty() {
+        format!("Debit Note {} remarks updated by {}", debit_note_no, user_name)
+    } else {
+        format!(
+            "Removed {} invoice line(s) [{}] from Debit Note {}. Recalculated total: ₹{:.2} by {}",
+            removed_lines.len(),
+            removed_inv_numbers.join(", "),
+            debit_note_no,
+            paise_to_float(new_total_value_paise),
+            user_name
+        )
+    };
+
+    log_event(
+        &tx,
+        Some(debit_note_id),
+        Some(case_id),
+        None,
+        "INFO",
+        "Debit Note Lines Updated",
+        &event_detail,
+        &user_name,
+    )?;
+
+    // 13. Commit the transaction
+    tx.commit().map_err(|e| AppError::Db {
+        code: "ERR_DB_003".to_string(),
+        message: format!("Commit update debit note lines transaction failed: {e}"),
+    })?;
+
+    // 14. Re-query and return the updated debit note header row
+    let header: CustomerDebitNoteRow = conn
+        .query_row(
+            "SELECT dn.id, dn.uuid, dn.company_id, dn.case_id, dn.financial_year_id, dn.debit_note_no, dn.annexure_no, dn.customer_id, c.report_name, c.customer_code, dn.debit_note_date, dn.reference, dn.total_taxable, dn.total_cgst, dn.total_sgst, dn.total_igst, dn.total_cess, dn.total_value, dn.round_off, dn.currency, dn.exchange_rate, dn.exchange_rate_source, dn.foreign_total_value, dn.outstanding_amount, dn.status, dn.financial_status, dn.template_version, dn.version, dn.idempotency_key, dn.sent_date, dn.payment_date, dn.remarks, dn.created_by, dn.created_at, dn.approved_by, dn.approved_at, dn.cancelled_by, dn.cancelled_date, dn.cancel_reason, dn.frozen_customer_name, dn.frozen_customer_gstin, dn.frozen_customer_address, dn.frozen_customer_state, dn.frozen_customer_country
+             FROM customer_debit_notes dn
+             JOIN customers c ON dn.customer_id = c.id
+             WHERE dn.id = ? AND dn.is_deleted = 0",
+            [debit_note_id],
+            |row| {
+                Ok(CustomerDebitNoteRow {
+                    id: Some(row.get(0)?),
+                    uuid: row.get(1)?,
+                    company_id: row.get(2)?,
+                    case_id: row.get(3)?,
+                    financial_year_id: row.get(4)?,
+                    debit_note_no: row.get(5)?,
+                    annexure_no: row.get(6)?,
+                    customer_id: row.get(7)?,
+                    customer_name: row.get(8)?,
+                    customer_code: row.get(9)?,
+                    debit_note_date: row.get(10)?,
+                    reference: row.get(11)?,
+                    total_taxable: paise_to_float(row.get(12)?),
+                    total_cgst: paise_to_float(row.get(13)?),
+                    total_sgst: paise_to_float(row.get(14)?),
+                    total_igst: paise_to_float(row.get(15)?),
+                    total_cess: paise_to_float(row.get(16)?),
+                    total_value: paise_to_float(row.get(17)?),
+                    round_off: paise_to_float(row.get(18)?),
+                    currency: row.get(19)?,
+                    exchange_rate: row.get(20)?,
+                    exchange_rate_source: row.get(21)?,
+                    foreign_total_value: paise_to_float(row.get(22)?),
+                    outstanding_amount: paise_to_float(row.get(23)?),
+                    status: row.get(24)?,
+                    financial_status: row.get(25)?,
+                    template_version: row.get(26)?,
+                    version: row.get(27)?,
+                    idempotency_key: row.get(28)?,
+                    sent_date: row.get(29)?,
+                    payment_date: row.get(30)?,
+                    remarks: row.get(31)?,
+                    created_by: row.get(32)?,
+                    created_at: row.get(33)?,
+                    approved_by: row.get(34)?,
+                    approved_at: row.get(35)?,
+                    cancelled_by: row.get(36)?,
+                    cancelled_date: row.get(37)?,
+                    cancel_reason: row.get(38)?,
+                    frozen_customer_name: row.get(39)?,
+                    frozen_customer_gstin: row.get(40)?,
+                    frozen_customer_address: row.get(41)?,
+                    frozen_customer_state: row.get(42)?,
+                    frozen_customer_country: row.get(43)?,
+                })
+            },
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Re-fetch debit note header failed: {e}"),
+        })?;
+
+    Ok(header)
+}
+
 /// Cancel a customer debit note & restore invoice quantity balances (Option A restoration policy)
 #[tauri::command]
 pub fn cancel_customer_debit_note(
@@ -1939,4 +2438,6 @@ mod tests {
         assert_eq!(float_to_paise(diff), 550);
     }
 }
+
+
 

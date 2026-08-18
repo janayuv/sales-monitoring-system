@@ -37,6 +37,9 @@ import { CategorySalesRow } from "../types/bindings/CategorySalesRow";
 import { CategoryCustomerBreakdownRow } from "../types/bindings/CategoryCustomerBreakdownRow";
 import { CategoryGrandTotals } from "../types/bindings/CategoryGrandTotals";
 import { ReportResult } from "../types/bindings/ReportResult";
+import { CustomerPartRow } from "../types/bindings/CustomerPartRow";
+
+export type { CustomerPartRow };
 
 export type { CompanyProfileRow };
 export type { CustomerCategoryRow };
@@ -729,6 +732,14 @@ export class ApiService {
 
   // --- Customer Price Revision & Debit Notes API Wrappers ---
 
+  static async getCustomerParts(customerId: number): Promise<CustomerPartRow[]> {
+    return await invoke<CustomerPartRow[]>("get_customer_parts", { customerId });
+  }
+
+  static async getAllItems(): Promise<CustomerPartRow[]> {
+    return await invoke<CustomerPartRow[]>("get_all_items");
+  }
+
   static async getCustomerPriceMaster(customerId?: number): Promise<any[]> {
     return await invoke<any[]>("get_customer_price_master", { customerId: customerId || null });
   }
@@ -882,6 +893,20 @@ export class ApiService {
       debitNoteId,
       cancelReason,
       userName,
+    });
+  }
+
+  static async updateCustomerDebitNoteLines(
+    debitNoteId: number,
+    remainingMapIds: number[],
+    remarks: string | null = null,
+    userName: string = "Admin User"
+  ): Promise<any> {
+    return await invoke<any>("update_customer_debit_note_lines", {
+      debitNoteId,
+      remainingMapIds,
+      remarks: remarks || null,
+      userName: userName || "Admin User",
     });
   }
 
