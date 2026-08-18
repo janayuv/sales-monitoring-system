@@ -647,7 +647,17 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 SET total_value = assessable_value + cgst_amount + sgst_amount + igst_amount;
             ",
         },
+        Migration {
+            version: 14,
+            description: "Add nullable hsn_code column and index to invoice_items table for transaction-level HSN tracking",
+            rebuild: false,
+            sql: "
+                ALTER TABLE invoice_items ADD COLUMN hsn_code TEXT;
+                CREATE INDEX IF NOT EXISTS idx_invoice_items_hsn ON invoice_items(hsn_code);
+            ",
+        },
     ];
+
 
     // 4. Apply migrations sequentially
     for migration in migrations {
@@ -961,4 +971,78 @@ mod tests {
         );
         assert!(second.is_err(), "CHECK(id=1) must reject a second row");
     }
+
+    #[test]
+    fn v14_invoice_items_has_hsn_code_column_and_preserves_existing_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        // 1. Verify hsn_code column exists in invoice_items
+        let cols = columns(&conn, "invoice_items");
+        assert!(
+            cols.contains(&"hsn_code".to_string()),
+            "missing hsn_code column in invoice_items after v14 migration"
+        );
+
+        // 2. Verify schema version is at least 14
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(current_version >= 14, "schema version should be >= 14");
+
+        // 3. Verify that existing invoice rows without hsn_code remain valid (nullable)
+        conn.execute(
+            "INSERT INTO customers (id, customer_code, report_name, status) VALUES (1, 'C1', 'Customer 1', 'Approved')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO items (part_code, part_name, hsn_code, uom_code, default_gst_rate, status)
+             VALUES ('P1', 'Part 1', '8708.99.00', 'PCS', 18.0, 'Approved')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO invoices (invoice_number, invoice_date, customer_id, financial_year_id, total_taxable, total_value, status)
+             VALUES ('INV-TEST-1', '2026-07-01', 1, 1, 1000.0, 1180.0, 'Imported')",
+            [],
+        ).unwrap();
+
+        // Insert legacy row with NULL hsn_code
+        conn.execute(
+            "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
+                                        cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value, hsn_code)
+             VALUES ('INV-TEST-1', 'P1', 10.0, 100.0, 1000.0, 9.0, 90.0, 9.0, 90.0, 0.0, 0.0, 1180.0, NULL)",
+            [],
+        ).unwrap();
+
+        // Insert new row with explicit transaction-level hsn_code
+        conn.execute(
+            "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
+                                        cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value, hsn_code)
+             VALUES ('INV-TEST-1', 'P1', 5.0, 100.0, 500.0, 9.0, 45.0, 9.0, 45.0, 0.0, 0.0, 590.0, '8409.91.99')",
+            [],
+        ).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM invoice_items WHERE invoice_number = 'INV-TEST-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let explicit_hsn: Option<String> = conn
+            .query_row(
+                "SELECT hsn_code FROM invoice_items WHERE assessable_value = 500.0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(explicit_hsn, Some("8409.91.99".to_string()));
+    }
 }
+

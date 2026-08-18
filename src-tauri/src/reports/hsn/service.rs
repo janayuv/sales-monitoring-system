@@ -45,7 +45,7 @@ impl HsnReportService {
             if !hsn_codes.is_empty() {
                 let placeholders = vec!["?"; hsn_codes.len()].join(", ");
                 count_qb.where_clause(
-                    format!("COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') IN ({})", placeholders),
+                    format!("COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') IN ({})", placeholders),
                     None,
                 );
                 for code in hsn_codes {
@@ -59,7 +59,7 @@ impl HsnReportService {
             if !t.is_empty() {
                 let pattern = format!("%{}%", t);
                 count_qb.where_clause(
-                    "(COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') LIKE ? OR h.description LIKE ? OR it.part_name LIKE ?)",
+                    "(COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') LIKE ? OR h.description LIKE ? OR it.part_name LIKE ?)",
                     Some(Box::new(pattern.clone())),
                 );
                 count_qb.where_clause("", Some(Box::new(pattern.clone())));
@@ -77,7 +77,7 @@ impl HsnReportService {
              FROM invoice_items ii
              JOIN invoices i ON ii.invoice_number = i.invoice_number
              JOIN items it ON ii.part_code = it.part_code
-             LEFT JOIN hsn_master h ON it.hsn_code = h.hsn_code
+             LEFT JOIN hsn_master h ON COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = h.hsn_code
              {}",
             count_where
         );

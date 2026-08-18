@@ -23,7 +23,7 @@ impl HsnReportRepository {
             if !hsn_codes.is_empty() {
                 let placeholders = vec!["?"; hsn_codes.len()].join(", ");
                 qb.where_clause(
-                    format!("COALESCE(h.hsn_code, it.hsn_code, 'UNASSIGNED') IN ({})", placeholders),
+                    format!("COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') IN ({})", placeholders),
                     None,
                 );
                 for code in hsn_codes {
@@ -38,7 +38,7 @@ impl HsnReportRepository {
             if !t.is_empty() {
                 let pattern = format!("%{}%", t);
                 qb.where_clause(
-                    "(COALESCE(h.hsn_code, it.hsn_code, 'UNASSIGNED') LIKE ? OR h.description LIKE ? OR it.part_name LIKE ?)",
+                    "(COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') LIKE ? OR h.description LIKE ? OR it.part_name LIKE ?)",
                     Some(Box::new(pattern.clone())),
                 );
                 qb.where_clause("", Some(Box::new(pattern.clone())));
@@ -49,7 +49,7 @@ impl HsnReportRepository {
         let where_sql = qb.build_where_sql();
         let query = format!(
             "SELECT
-                COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') AS hsn_code,
+                COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') AS hsn_code,
                 MAX(h.description) AS description,
                 MAX(it.uom_code) AS uom_code,
                 COALESCE(MAX(h.gst_rate), MAX(it.default_gst_rate), 0.0) AS gst_rate,
@@ -66,9 +66,9 @@ impl HsnReportRepository {
             FROM invoice_items ii
             JOIN invoices i ON ii.invoice_number = i.invoice_number
             JOIN items it ON ii.part_code = it.part_code
-            LEFT JOIN hsn_master h ON it.hsn_code = h.hsn_code
+            LEFT JOIN hsn_master h ON COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = h.hsn_code
             {}
-            GROUP BY COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED')
+            GROUP BY COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED')
             ORDER BY total_value DESC, hsn_code ASC",
             where_sql
         );
@@ -163,10 +163,10 @@ impl HsnReportRepository {
         qb.apply_common_filters(&filter.common, "i.invoice_date", "i.status");
 
         if hsn_code.to_uppercase() == "UNASSIGNED" {
-            qb.where_clause("COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = 'UNASSIGNED'", None);
+            qb.where_clause("COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = 'UNASSIGNED'", None);
         } else {
             qb.where_clause(
-                "COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = ?",
+                "COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = ?",
                 Some(Box::new(hsn_code.to_string())),
             );
         }
@@ -174,7 +174,7 @@ impl HsnReportRepository {
         let where_sql = qb.build_where_sql();
         let query = format!(
             "SELECT
-                COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') AS hsn_code,
+                COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') AS hsn_code,
                 it.part_code,
                 it.part_name,
                 COALESCE(it.uom_code, 'NOS') AS uom_code,
@@ -192,7 +192,7 @@ impl HsnReportRepository {
             FROM invoice_items ii
             JOIN invoices i ON ii.invoice_number = i.invoice_number
             JOIN items it ON ii.part_code = it.part_code
-            LEFT JOIN hsn_master h ON it.hsn_code = h.hsn_code
+            LEFT JOIN hsn_master h ON COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = h.hsn_code
             {}
             GROUP BY it.part_code, it.part_name, it.uom_code, it.default_gst_rate
             ORDER BY total_value DESC, it.part_code ASC",
@@ -241,10 +241,10 @@ impl HsnReportRepository {
         qb.apply_common_filters(&filter.common, "i.invoice_date", "i.status");
 
         if hsn_code.to_uppercase() == "UNASSIGNED" {
-            qb.where_clause("COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = 'UNASSIGNED'", None);
+            qb.where_clause("COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = 'UNASSIGNED'", None);
         } else {
             qb.where_clause(
-                "COALESCE(NULLIF(TRIM(h.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = ?",
+                "COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = ?",
                 Some(Box::new(hsn_code.to_string())),
             );
         }
@@ -280,7 +280,7 @@ impl HsnReportRepository {
             FROM invoice_items ii
             JOIN invoices i ON ii.invoice_number = i.invoice_number
             JOIN items it ON ii.part_code = it.part_code
-            LEFT JOIN hsn_master h ON it.hsn_code = h.hsn_code
+            LEFT JOIN hsn_master h ON COALESCE(NULLIF(TRIM(ii.hsn_code), ''), NULLIF(TRIM(it.hsn_code), ''), 'UNASSIGNED') = h.hsn_code
             LEFT JOIN customers c ON i.customer_id = c.id
             {}
             ORDER BY i.invoice_date DESC, i.invoice_number DESC, ii.id ASC",

@@ -6,3 +6,4 @@ pub mod export_service;
 pub mod financial_period_service;
 pub mod import_service;
 pub mod maintenance_service;
+pub mod hsn_recovery_service;

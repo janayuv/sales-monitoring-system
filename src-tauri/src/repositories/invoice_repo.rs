@@ -202,8 +202,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     ) -> Result<(), AppError> {
         let mut stmt = conn.prepare(
             "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value,
-                                        cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                        cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value, hsn_code)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
@@ -223,7 +223,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 item.sgst_amount,
                 item.igst_rate,
                 item.igst_amount,
-                item.total_value
+                item.total_value,
+                item.hsn_code
             ])
             .map_err(|e| AppError::Db {
                 code: "ERR_DB_003".to_string(),
@@ -241,7 +242,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let mut stmt = conn.prepare(
             "SELECT ii.id, ii.invoice_number, ii.part_code, ii.quantity, ii.rate_pre_unit, ii.assessable_value,
                     ii.cgst_rate, ii.cgst_amount, ii.sgst_rate, ii.sgst_amount, ii.igst_rate, ii.igst_amount, ii.total_value,
-                    it.part_name AS description
+                    it.part_name AS description, ii.hsn_code
              FROM invoice_items ii
              LEFT JOIN items it ON ii.part_code = it.part_code
              WHERE ii.invoice_number = ?",
@@ -268,6 +269,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                     igst_rate: row.get(10)?,
                     igst_amount: row.get(11)?,
                     total_value: row.get(12)?,
+                    hsn_code: row.get(14).ok(),
                 })
             })
             .map_err(|e| AppError::Db {

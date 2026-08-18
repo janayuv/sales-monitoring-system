@@ -48,7 +48,8 @@ fn setup_test_db() -> Connection {
             sgst_amount REAL DEFAULT 0.0,
             igst_rate REAL DEFAULT 0.0,
             igst_amount REAL DEFAULT 0.0,
-            total_value REAL NOT NULL
+            total_value REAL NOT NULL,
+            hsn_code TEXT
         );
         CREATE TABLE audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -335,4 +336,94 @@ fn test_hsn_report_specific_hsn_filter() {
     assert_eq!(res.grand_totals.total_taxable, 5000.0);
     assert_eq!(res.grand_totals.top_hsn_code, "8409");
 }
+
+#[test]
+fn test_same_part_code_under_multiple_hsns_separated_across_all_levels() {
+    let conn = setup_test_db();
+    let ctx = ReportContext {
+        conn: &conn,
+        generated_at: "2026-08-18T10:00:00Z".to_string(),
+        user_name: Some("Tester".to_string()),
+    };
+
+    // 1. Create a multi-HSN part 'PART-MULTI' whose default item HSN is '8708'
+    conn.execute(
+        "INSERT INTO items (part_code, part_name, hsn_code, uom_code, default_gst_rate)
+         VALUES ('PART-MULTI', 'Dual Classification Filter', '8708', 'PCS', 18.0)",
+        [],
+    ).unwrap();
+
+    // 2. Create Invoice INV-M1 where PART-MULTI is sold under transaction HSN '8409' (qty 10, taxable 10000)
+    conn.execute(
+        "INSERT INTO invoices (invoice_number, invoice_date, customer_id, financial_year_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status)
+         VALUES ('INV-M1', '2026-04-12', 1, 1, 10000.0, 900.0, 900.0, 0.0, 11800.0, 'Posted')",
+        [],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value, cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value, hsn_code)
+         VALUES ('INV-M1', 'PART-MULTI', 10.0, 1000.0, 10000.0, 9.0, 900.0, 9.0, 900.0, 0.0, 0.0, 11800.0, '8409')",
+        [],
+    ).unwrap();
+
+    // 3. Create Invoice INV-M2 where SAME PART-MULTI is sold under transaction HSN '8708' (qty 20, taxable 20000)
+    conn.execute(
+        "INSERT INTO invoices (invoice_number, invoice_date, customer_id, financial_year_id, total_taxable, total_cgst, total_sgst, total_igst, total_value, status)
+         VALUES ('INV-M2', '2026-04-18', 2, 1, 20000.0, 1800.0, 1800.0, 0.0, 23600.0, 'Posted')",
+        [],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO invoice_items (invoice_number, part_code, quantity, rate_pre_unit, assessable_value, cgst_rate, cgst_amount, sgst_rate, sgst_amount, igst_rate, igst_amount, total_value, hsn_code)
+         VALUES ('INV-M2', 'PART-MULTI', 20.0, 1000.0, 20000.0, 9.0, 1800.0, 9.0, 1800.0, 0.0, 0.0, 23600.0, '8708')",
+        [],
+    ).unwrap();
+
+    let filter = HsnReportFilter {
+        common: ReportFilterCommon {
+            date_from: Some("2026-04-01".to_string()),
+            date_to: Some("2026-04-30".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // --- LEVEL 1: Verify both HSN 8409 and 8708 aggregated rows reflect separate line assignments ---
+    let report = HsnReportService::generate_report(&ctx, filter.clone()).unwrap();
+    
+    let hsn_8409 = report.rows.iter().find(|r| r.hsn_code == "8409").unwrap();
+    // 8409 base had PART-003 (qty 5, taxable 5000) + now PART-MULTI from INV-M1 (qty 10, taxable 10000) = qty 15, taxable 15000
+    assert_eq!(hsn_8409.total_quantity, 15.0);
+    assert_eq!(hsn_8409.total_taxable, 15000.0);
+
+    let hsn_8708 = report.rows.iter().find(|r| r.hsn_code == "8708").unwrap();
+    // 8708 base had PART-001 (qty 10, taxable 10000) + PART-002 (qty 2, taxable 1000) + now PART-MULTI from INV-M2 (qty 20, taxable 20000) = qty 32, taxable 31000
+    assert_eq!(hsn_8708.total_quantity, 32.0);
+    assert_eq!(hsn_8708.total_taxable, 31000.0);
+
+    // --- LEVEL 2: Verify item drilldown for 8409 and 8708 separately includes PART-MULTI with exact quantities ---
+    let items_8409 = HsnReportService::get_item_breakdown(&ctx, filter.clone(), "8409").unwrap();
+    let part_multi_in_8409 = items_8409.iter().find(|i| i.part_code == "PART-MULTI").unwrap();
+    assert_eq!(part_multi_in_8409.hsn_code, "8409");
+    assert_eq!(part_multi_in_8409.total_quantity, 10.0);
+    assert_eq!(part_multi_in_8409.total_taxable, 10000.0);
+    assert_eq!(part_multi_in_8409.invoice_count, 1);
+
+    let items_8708 = HsnReportService::get_item_breakdown(&ctx, filter.clone(), "8708").unwrap();
+    let part_multi_in_8708 = items_8708.iter().find(|i| i.part_code == "PART-MULTI").unwrap();
+    assert_eq!(part_multi_in_8708.hsn_code, "8708");
+    assert_eq!(part_multi_in_8708.total_quantity, 20.0);
+    assert_eq!(part_multi_in_8708.total_taxable, 20000.0);
+    assert_eq!(part_multi_in_8708.invoice_count, 1);
+
+    // --- LEVEL 3: Verify invoice drilldown for PART-MULTI filters strictly by transaction HSN ---
+    let invs_8409_part = HsnReportService::get_invoice_breakdown(&ctx, filter.clone(), "8409", Some("PART-MULTI")).unwrap();
+    assert_eq!(invs_8409_part.len(), 1);
+    assert_eq!(invs_8409_part[0].invoice_number, "INV-M1");
+    assert_eq!(invs_8409_part[0].assessable_value, 10000.0);
+
+    let invs_8708_part = HsnReportService::get_invoice_breakdown(&ctx, filter, "8708", Some("PART-MULTI")).unwrap();
+    assert_eq!(invs_8708_part.len(), 1);
+    assert_eq!(invs_8708_part[0].invoice_number, "INV-M2");
+    assert_eq!(invs_8708_part[0].assessable_value, 20000.0);
+}
+
 

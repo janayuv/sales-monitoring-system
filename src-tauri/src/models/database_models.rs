@@ -212,6 +212,7 @@ pub struct InvoiceItemRow {
     pub igst_rate: f64,
     pub igst_amount: f64,
     pub total_value: f64,
+    pub hsn_code: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]

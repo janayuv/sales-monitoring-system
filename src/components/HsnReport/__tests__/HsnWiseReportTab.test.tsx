@@ -12,14 +12,65 @@ vi.mock("../../../services/api", () => ({
   },
 }));
 
-vi.mock("../../../services/reportExportService", () => ({
-  ReportExportService: {
-    exportToCsv: vi.fn().mockResolvedValue(true),
-    exportGstr1Table12Csv: vi.fn().mockResolvedValue(true),
-    copyToClipboard: vi.fn().mockResolvedValue(true),
-    printReport: vi.fn(),
-  },
-}));
+vi.mock("../../../services/reportExportService", () => {
+  const formatGstr1Uqc = (rawUom?: string | null) => {
+    if (!rawUom || !rawUom.trim()) return "OTH-OTHERS";
+    const upper = rawUom.trim().toUpperCase();
+    if (upper.includes("-")) return upper;
+
+    const uqcMap: Record<string, string> = {
+      NOS: "NOS-NUMBERS",
+      NO: "NOS-NUMBERS",
+      NUM: "NOS-NUMBERS",
+      PCS: "PCS-PIECES",
+      PC: "PCS-PIECES",
+      PIECE: "PCS-PIECES",
+      PIECES: "PCS-PIECES",
+      KGS: "KGS-KILOGRAMS",
+      KG: "KGS-KILOGRAMS",
+      KILOGRAM: "KGS-KILOGRAMS",
+      KILOGRAMS: "KGS-KILOGRAMS",
+      KLR: "KLR-KILOLITRE",
+      KL: "KLR-KILOLITRE",
+      KILOLITRE: "KLR-KILOLITRE",
+      LTR: "LTR-LITRES",
+      LT: "LTR-LITRES",
+      LITRE: "LTR-LITRES",
+      LITRES: "LTR-LITRES",
+      MTR: "MTR-METRES",
+      MT: "MTR-METRES",
+      M: "MTR-METRES",
+      METRE: "MTR-METRES",
+      METRES: "MTR-METRES",
+      SET: "SET-SETS",
+      SETS: "SET-SETS",
+      BOX: "BOX-BOX",
+      BTL: "BTL-BOTTLES",
+      CAN: "CAN-CANS",
+      DRM: "DRM-DRUMS",
+      BAG: "BAG-BAGS",
+      GMS: "GMS-GRAMMES",
+      GM: "GMS-GRAMMES",
+      QTL: "QTL-QUINTAL",
+      TON: "TON-TONNES",
+      SQM: "SQM-SQUARE METRES",
+      SQF: "SQF-SQUARE FEET",
+      OTH: "OTH-OTHERS",
+    };
+
+    return uqcMap[upper] || `${upper}-OTHERS`;
+  };
+
+  return {
+    ReportExportService: {
+      formatGstr1Uqc,
+      exportToCsv: vi.fn().mockResolvedValue(true),
+      exportGstr1Table12Csv: vi.fn().mockResolvedValue(true),
+      copyToClipboard: vi.fn().mockResolvedValue(true),
+      printReport: vi.fn(),
+    },
+  };
+});
 
 describe("HsnWiseReportTab Component", () => {
   const sampleReportResult = {
@@ -319,4 +370,17 @@ describe("HsnWiseReportTab Component", () => {
       expect(screen.getByTestId("hsn-empty-state")).toBeInTheDocument();
     });
   });
+
+  it("7. Correctly maps UQC codes for GSTR-1 Table 12 format", () => {
+    expect(ReportExportService.formatGstr1Uqc("NOS")).toBe("NOS-NUMBERS");
+    expect(ReportExportService.formatGstr1Uqc("KGS")).toBe("KGS-KILOGRAMS");
+    expect(ReportExportService.formatGstr1Uqc("KG")).toBe("KGS-KILOGRAMS");
+    expect(ReportExportService.formatGstr1Uqc("KLR")).toBe("KLR-KILOLITRE");
+    expect(ReportExportService.formatGstr1Uqc("PCS")).toBe("PCS-PIECES");
+    expect(ReportExportService.formatGstr1Uqc("MTR")).toBe("MTR-METRES");
+    expect(ReportExportService.formatGstr1Uqc("NOS-NUMBERS")).toBe("NOS-NUMBERS");
+    expect(ReportExportService.formatGstr1Uqc(null)).toBe("OTH-OTHERS");
+    expect(ReportExportService.formatGstr1Uqc("")).toBe("OTH-OTHERS");
+  });
 });
+

@@ -79,6 +79,57 @@ export class ReportExportService {
   }
 
   /**
+   * Formats a raw UOM string to standard GSTR-1 Table 12 UQC code (e.g. NOS-NUMBERS, KGS-KILOGRAMS, KLR-KILOLITRE)
+   */
+  static formatGstr1Uqc(rawUom?: string | null): string {
+    if (!rawUom || !rawUom.trim()) return "OTH-OTHERS";
+    const upper = rawUom.trim().toUpperCase();
+    if (upper.includes("-")) return upper;
+
+    const uqcMap: Record<string, string> = {
+      NOS: "NOS-NUMBERS",
+      NO: "NOS-NUMBERS",
+      NUM: "NOS-NUMBERS",
+      PCS: "PCS-PIECES",
+      PC: "PCS-PIECES",
+      PIECE: "PCS-PIECES",
+      PIECES: "PCS-PIECES",
+      KGS: "KGS-KILOGRAMS",
+      KG: "KGS-KILOGRAMS",
+      KILOGRAM: "KGS-KILOGRAMS",
+      KILOGRAMS: "KGS-KILOGRAMS",
+      KLR: "KLR-KILOLITRE",
+      KL: "KLR-KILOLITRE",
+      KILOLITRE: "KLR-KILOLITRE",
+      LTR: "LTR-LITRES",
+      LT: "LTR-LITRES",
+      LITRE: "LTR-LITRES",
+      LITRES: "LTR-LITRES",
+      MTR: "MTR-METRES",
+      MT: "MTR-METRES",
+      M: "MTR-METRES",
+      METRE: "MTR-METRES",
+      METRES: "MTR-METRES",
+      SET: "SET-SETS",
+      SETS: "SET-SETS",
+      BOX: "BOX-BOX",
+      BTL: "BTL-BOTTLES",
+      CAN: "CAN-CANS",
+      DRM: "DRM-DRUMS",
+      BAG: "BAG-BAGS",
+      GMS: "GMS-GRAMMES",
+      GM: "GMS-GRAMMES",
+      QTL: "QTL-QUINTAL",
+      TON: "TON-TONNES",
+      SQM: "SQM-SQUARE METRES",
+      SQF: "SQF-SQUARE FEET",
+      OTH: "OTH-OTHERS",
+    };
+
+    return uqcMap[upper] || `${upper}-OTHERS`;
+  }
+
+  /**
    * Export GSTR-1 Table 12 HSN Summary CSV (Direct Government Format)
    */
   static async exportGstr1Table12Csv(
@@ -103,7 +154,7 @@ export class ReportExportService {
       for (const r of rows) {
         const hsn = (r.hsn_code || "").replace(/"/g, '""');
         const desc = (r.description || "").replace(/"/g, '""');
-        const uqc = (r.uom_code || "OTH").replace(/"/g, '""');
+        const uqc = this.formatGstr1Uqc(r.uom_code).replace(/"/g, '""');
         const qty = r.total_quantity || 0;
         const totalVal = (r.total_value || 0).toFixed(2);
         const taxableVal = (r.total_taxable || 0).toFixed(2);
