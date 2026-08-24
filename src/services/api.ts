@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ImportMode } from "../types/bindings/ImportMode";
 import { ImportPreview } from "../types/bindings/ImportPreview";
 import { ImportTemplateRow } from "../types/bindings/ImportTemplateRow";
 import { InvoiceSummary } from "../types/bindings/InvoiceSummary";
@@ -139,13 +140,15 @@ export class ApiService {
     filePath: string,
     templateId: number,
     userName: string,
-    userRemarks?: string
+    userRemarks?: string,
+    mode?: ImportMode
   ): Promise<number> {
     return await invoke<number>("commit_import_batch", {
       filePath,
       templateId,
       userName,
       userRemarks: userRemarks || null,
+      mode: mode || "Append",
     });
   }
 

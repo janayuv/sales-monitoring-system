@@ -2,4 +2,4 @@
 import type { ValidationErrorDetail } from "./ValidationErrorDetail";
 import type { ValidationWarningDetail } from "./ValidationWarningDetail";
 
-export type ImportPreview = { batch_hash: string, file_name: string, row_count: number, mapped_template_name: string, errors: Array<ValidationErrorDetail>, warnings: Array<ValidationWarningDetail>, proposed_inserts: number, proposed_updates: number, };
+export type ImportPreview = { batch_hash: string, file_name: string, row_count: number, mapped_template_name: string, errors: Array<ValidationErrorDetail>, warnings: Array<ValidationWarningDetail>, proposed_inserts: number, proposed_updates: number, is_duplicate: boolean, existing_batch_id: bigint | null, existing_batch_imported_at: string | null, };

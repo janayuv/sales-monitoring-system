@@ -1,6 +1,9 @@
 use crate::error::AppError;
 use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
+use std::time::Instant;
 
+#[derive(Clone, Debug)]
 pub struct Migration {
     pub version: i32,
     pub description: &'static str,
@@ -11,8 +14,20 @@ pub struct Migration {
     pub rebuild: bool,
 }
 
-pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
-    // 1. Create migrations tracking table if not present
+/// Computes the normalized SHA256 checksum of migration SQL (converting CRLF to LF for cross-platform determinism)
+pub fn compute_sql_checksum(sql: &str) -> String {
+    let normalized = sql.replace("\r\n", "\n");
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.trim().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Upgrades the schema_migrations table structure to support checksums, app versions, and execution times
+fn ensure_and_upgrade_schema_migrations(
+    conn: &mut Connection,
+    migrations: &[Migration],
+) -> Result<(), AppError> {
+    // 1. Create base tracking table if not present
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -26,20 +41,78 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
         message: format!("Failed to create schema_migrations table: {}", e),
     })?;
 
-    // 2. Fetch last applied migration version
-    let current_version: i32 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+    // 2. Check existing columns in schema_migrations
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(schema_migrations);")
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to inspect schema_migrations table: {}", e),
+        })?;
+
+    let existing_columns: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to read schema_migrations columns: {}", e),
+        })?
+        .filter_map(|res| res.ok())
+        .collect();
+
+    // 3. Add new audit columns if missing (backward compatibility with legacy databases)
+    if !existing_columns.contains(&"checksum_sha256".to_string()) {
+        conn.execute(
+            "ALTER TABLE schema_migrations ADD COLUMN checksum_sha256 TEXT;",
             [],
-            |row| row.get(0),
         )
         .map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
-            message: format!("Failed to fetch current schema version: {}", e),
+            message: format!("Failed to add checksum_sha256 column: {}", e),
         })?;
+    }
 
-    // 3. Define migrations list
-    let migrations = vec![
+    if !existing_columns.contains(&"app_version".to_string()) {
+        conn.execute(
+            "ALTER TABLE schema_migrations ADD COLUMN app_version TEXT;",
+            [],
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to add app_version column: {}", e),
+        })?;
+    }
+
+    if !existing_columns.contains(&"execution_time_ms".to_string()) {
+        conn.execute(
+            "ALTER TABLE schema_migrations ADD COLUMN execution_time_ms INTEGER NOT NULL DEFAULT 0;",
+            [],
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to add execution_time_ms column: {}", e),
+        })?;
+    }
+
+    // 4. Backfill checksum_sha256 and app_version for legacy applied rows that have NULL checksums
+    let current_app_ver = env!("CARGO_PKG_VERSION");
+    for m in migrations {
+        let expected_checksum = compute_sql_checksum(m.sql);
+        conn.execute(
+            "UPDATE schema_migrations 
+             SET checksum_sha256 = ?, app_version = COALESCE(app_version, ?)
+             WHERE version = ? AND checksum_sha256 IS NULL",
+            params![expected_checksum, current_app_ver, m.version],
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to backfill migration v{} metadata: {}", m.version, e),
+        })?;
+    }
+
+    Ok(())
+}
+
+pub fn get_migrations() -> Vec<Migration> {
+    vec![
         Migration {
             version: 1,
             description: "Initial schema migrations containing all master and transactional tables",
@@ -656,100 +729,170 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                 CREATE INDEX IF NOT EXISTS idx_invoice_items_hsn ON invoice_items(hsn_code);
             ",
         },
-    ];
+    ]
+}
 
+pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
+    let migrations = get_migrations();
 
-    // 4. Apply migrations sequentially
-    for migration in migrations {
-        if migration.version > current_version {
+    // 1. Upgrade schema_migrations tracking table if needed
+    ensure_and_upgrade_schema_migrations(conn, &migrations)?;
+
+    // 2. Fetch last applied migration version
+    let current_version: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to fetch current schema version: {}", e),
+        })?;
+
+    let target_version = migrations.iter().map(|m| m.version).max().unwrap_or(0);
+
+    // 3. Strict Downgrade Protection: if DB version > application target version, abort
+    if current_version > target_version {
+        return Err(AppError::Db {
+            code: "ERR_DB_DOWNGRADE".to_string(),
+            message: format!(
+                "Database schema version (v{}) is newer than the supported application version (v{}). Downgrading is blocked to protect data integrity.",
+                current_version, target_version
+            ),
+        });
+    }
+
+    // 4. Verify historical migration checksums to detect script tampering or drift
+    for m in &migrations {
+        if m.version <= current_version {
+            let expected_checksum = compute_sql_checksum(m.sql);
+            let stored_checksum: Option<String> = conn
+                .query_row(
+                    "SELECT checksum_sha256 FROM schema_migrations WHERE version = ?",
+                    [m.version],
+                    |r| r.get(0),
+                )
+                .ok()
+                .flatten();
+
+            if let Some(ref stored) = stored_checksum {
+                if stored != &expected_checksum {
+                    return Err(AppError::Db {
+                        code: "ERR_DB_CHECKSUM_MISMATCH".to_string(),
+                        message: format!(
+                            "Migration checksum mismatch for v{}: database contains '{}', expected '{}'. Historical migration drift detected.",
+                            m.version, stored, expected_checksum
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    // 5. Apply all pending migrations in one atomic upgrade transaction
+    apply_migrations_atomic(conn, &migrations, current_version)
+}
+
+/// Executes all pending migrations from `current_version + 1` to `target_version` within a single
+/// atomic transaction. If any migration fails, the entire upgrade rolls back completely.
+pub fn apply_migrations_atomic(
+    conn: &mut Connection,
+    migrations: &[Migration],
+    current_version: i32,
+) -> Result<(), AppError> {
+    ensure_and_upgrade_schema_migrations(conn, migrations)?;
+
+    let pending_migrations: Vec<&Migration> = migrations
+        .iter()
+        .filter(|m| m.version > current_version)
+        .collect();
+
+    if pending_migrations.is_empty() {
+        return Ok(());
+    }
+
+    let has_rebuild = pending_migrations.iter().any(|m| m.rebuild);
+    let app_version = env!("CARGO_PKG_VERSION");
+
+    // Rebuild migrations require foreign keys to be disabled outside the transaction
+    if has_rebuild {
+        conn.pragma_update(None, "foreign_keys", "OFF")
+            .map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to disable foreign_keys for rebuild: {}", e),
+            })?;
+    }
+
+    let result = (|| -> Result<(), AppError> {
+        let tx = conn.transaction().map_err(|e| AppError::Db {
+            code: "ERR_DB_003".to_string(),
+            message: format!("Failed to begin atomic migration transaction: {}", e),
+        })?;
+
+        for migration in &pending_migrations {
             log::info!(
                 "Applying migration v{}: {}",
                 migration.version,
                 migration.description
             );
-            if migration.rebuild {
-                apply_rebuild_migration(conn, &migration)?;
-            } else {
-                let tx = conn.transaction().map_err(|e| AppError::Db {
-                    code: "ERR_DB_003".to_string(),
-                    message: format!("Failed to begin transaction: {}", e),
-                })?;
-                tx.execute_batch(migration.sql).map_err(|e| AppError::Db {
-                    code: "ERR_DB_003".to_string(),
-                    message: format!("Failed to execute migration script: {}", e),
-                })?;
-                tx.execute(
-                    "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
-                    params![migration.version, migration.description],
-                )
-                .map_err(|e| AppError::Db {
-                    code: "ERR_DB_003".to_string(),
-                    message: format!("Failed to log migration status: {}", e),
-                })?;
-                tx.commit().map_err(|e| AppError::Db {
-                    code: "ERR_DB_003".to_string(),
-                    message: format!("Failed to commit migration transaction: {}", e),
-                })?;
-            }
-        }
-    }
 
-    Ok(())
-}
+            let start_time = Instant::now();
+            let checksum = compute_sql_checksum(migration.sql);
 
-/// Applies a table-rebuild migration. `PRAGMA foreign_keys` is a no-op inside a
-/// transaction, so it is toggled OFF outside, then a foreign_key_check runs
-/// before commit; any violation rolls the whole rebuild back.
-fn apply_rebuild_migration(conn: &mut Connection, migration: &Migration) -> Result<(), AppError> {
-    conn.pragma_update(None, "foreign_keys", "OFF")
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to disable foreign_keys for rebuild: {}", e),
-        })?;
-
-    let result = (|| {
-        let tx = conn.transaction().map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to begin rebuild transaction: {}", e),
-        })?;
-        tx.execute_batch(migration.sql).map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to execute rebuild script: {}", e),
-        })?;
-        tx.execute(
-            "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
-            params![migration.version, migration.description],
-        )
-        .map_err(|e| AppError::Db {
-            code: "ERR_DB_003".to_string(),
-            message: format!("Failed to log rebuild migration: {}", e),
-        })?;
-        let violations: i64 = tx
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
-                r.get(0)
-            })
-            .map_err(|e| AppError::Db {
-                code: "ERR_DB_003".to_string(),
-                message: format!("foreign_key_check read failed: {e}"),
-            })?;
-        if violations > 0 {
-            return Err(AppError::Db {
+            tx.execute_batch(migration.sql).map_err(|e| AppError::Db {
                 code: "ERR_DB_003".to_string(),
                 message: format!(
-                    "Rebuild v{} failed foreign_key_check ({violations} violations)",
-                    migration.version
+                    "Failed to execute migration v{} script: {}",
+                    migration.version, e
                 ),
-            });
+            })?;
+
+            if migration.rebuild {
+                let violations: i64 = tx
+                    .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                        r.get(0)
+                    })
+                    .map_err(|e| AppError::Db {
+                        code: "ERR_DB_003".to_string(),
+                        message: format!("foreign_key_check read failed for v{}: {}", migration.version, e),
+                    })?;
+
+                if violations > 0 {
+                    return Err(AppError::Db {
+                        code: "ERR_DB_003".to_string(),
+                        message: format!(
+                            "Rebuild v{} failed foreign_key_check ({} violations)",
+                            migration.version, violations
+                        ),
+                    });
+                }
+            }
+
+            let elapsed_ms = start_time.elapsed().as_millis() as i64;
+            tx.execute(
+                "INSERT INTO schema_migrations (version, description, checksum_sha256, app_version, execution_time_ms) VALUES (?, ?, ?, ?, ?)",
+                params![migration.version, migration.description, checksum, app_version, elapsed_ms],
+            )
+            .map_err(|e| AppError::Db {
+                code: "ERR_DB_003".to_string(),
+                message: format!("Failed to log migration status for v{}: {}", migration.version, e),
+            })?;
         }
+
         tx.commit().map_err(|e| AppError::Db {
             code: "ERR_DB_003".to_string(),
-            message: format!("Failed to commit rebuild transaction: {}", e),
+            message: format!("Failed to commit atomic migration transaction: {}", e),
         })?;
+
         Ok(())
     })();
 
-    // Restore enforcement regardless of outcome.
-    conn.pragma_update(None, "foreign_keys", "ON").ok();
+    // Restore foreign key enforcement regardless of outcome
+    if has_rebuild {
+        conn.pragma_update(None, "foreign_keys", "ON").ok();
+    }
+
     result
 }
 
@@ -867,7 +1010,7 @@ mod tests {
             rebuild: true,
         };
 
-        let result = apply_rebuild_migration(&mut conn, &bogus_migration);
+        let result = apply_migrations_atomic(&mut conn, &[bogus_migration], 0);
         assert!(
             result.is_err(),
             "pre-existing dangling FK should abort the rebuild via foreign_key_check"
@@ -1043,6 +1186,146 @@ mod tests {
             )
             .unwrap();
         assert_eq!(explicit_hsn, Some("8409.91.99".to_string()));
+    }
+
+    #[test]
+    fn test_downgrade_detection_blocks_newer_db_version() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // Simulate a database from future app version 99
+        conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT, description TEXT)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at, description) VALUES (99, '2027-01-01', 'Future Migration')",
+            [],
+        ).unwrap();
+
+        let res = run_migrations(&mut conn);
+        assert!(res.is_err(), "Expected error on newer database version");
+        match res.unwrap_err() {
+            AppError::Db { code, message } => {
+                assert_eq!(code, "ERR_DB_DOWNGRADE");
+                assert!(message.contains("newer than the supported application version"));
+            }
+            other => panic!("Expected ERR_DB_DOWNGRADE, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_legacy_schema_migrations_upgrade_and_backfill() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // Create legacy 3-column table (as existed in v1.0 - v1.5.1)
+        conn.execute(
+            "CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+                description TEXT
+             )",
+            [],
+        ).unwrap();
+
+        // Simulate legacy migration v1 and v2 DDL already executed in DB
+        let v1_sql = include_str!("../migrations/0001_init.sql");
+        conn.execute_batch(v1_sql).unwrap();
+        conn.execute("ALTER TABLE customers ADD COLUMN tally_customer_name TEXT;", []).unwrap();
+
+        conn.execute("INSERT INTO schema_migrations (version, description) VALUES (1, 'Initial schema')", []).unwrap();
+        conn.execute("INSERT INTO schema_migrations (version, description) VALUES (2, 'Add tally_customer_name')", []).unwrap();
+
+        // Run migrations
+        run_migrations(&mut conn).unwrap();
+
+        // Assert schema_migrations was upgraded with 3 new columns
+        let cols = columns(&conn, "schema_migrations");
+        assert!(cols.contains(&"checksum_sha256".to_string()), "missing checksum_sha256");
+        assert!(cols.contains(&"app_version".to_string()), "missing app_version");
+        assert!(cols.contains(&"execution_time_ms".to_string()), "missing execution_time_ms");
+
+        // Assert v1 and v2 checksums were properly backfilled
+        let v1_checksum: Option<String> = conn.query_row("SELECT checksum_sha256 FROM schema_migrations WHERE version = 1", [], |r| r.get(0)).unwrap();
+        assert!(v1_checksum.is_some(), "v1 checksum should be backfilled");
+        assert!(!v1_checksum.unwrap().is_empty());
+
+        let v14_checksum: Option<String> = conn.query_row("SELECT checksum_sha256 FROM schema_migrations WHERE version = 14", [], |r| r.get(0)).unwrap();
+        assert!(v14_checksum.is_some(), "v14 checksum should be present");
+    }
+
+    #[test]
+    fn test_checksum_validation_and_drift_detection() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        // Intentionally tamper with a recorded checksum in schema_migrations
+        conn.execute(
+            "UPDATE schema_migrations SET checksum_sha256 = 'tampered_invalid_hash_value' WHERE version = 1",
+            [],
+        ).unwrap();
+
+        // Next connection attempt / run_migrations must detect tampering
+        let res = run_migrations(&mut conn);
+        assert!(res.is_err(), "Expected checksum mismatch error");
+        match res.unwrap_err() {
+            AppError::Db { code, message } => {
+                assert_eq!(code, "ERR_DB_CHECKSUM_MISMATCH");
+                assert!(message.contains("Historical migration drift detected"));
+            }
+            other => panic!("Expected ERR_DB_CHECKSUM_MISMATCH, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_multi_version_migration_atomicity_and_logging() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 14, "All 14 migrations should be logged in schema_migrations");
+
+        let null_checksums: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations WHERE checksum_sha256 IS NULL OR TRIM(checksum_sha256) = ''", [], |r| r.get(0)).unwrap();
+        assert_eq!(null_checksums, 0, "No migration should have null/empty checksum");
+    }
+
+    #[test]
+    fn test_multi_version_atomic_upgrade_rollback_v10_to_v14_on_failure() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let all_migrations = get_migrations();
+
+        // 1. Initialize database up to version 10
+        let v1_to_v10: Vec<Migration> = all_migrations.iter().filter(|m| m.version <= 10).cloned().collect();
+        ensure_and_upgrade_schema_migrations(&mut conn, &v1_to_v10).unwrap();
+        apply_migrations_atomic(&mut conn, &v1_to_v10, 0).unwrap();
+
+        let initial_ver: i32 = conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0)).unwrap();
+        assert_eq!(initial_ver, 10, "Database should be at version 10 initially");
+
+        // 2. Prepare an upgrade to v14 where v14 contains an invalid SQL statement that triggers a fatal error
+        let mut upgrade_migrations = all_migrations.clone();
+        if let Some(m14) = upgrade_migrations.iter_mut().find(|m| m.version == 14) {
+            m14.sql = "ALTER TABLE invoice_items ADD COLUMN hsn_code TEXT; SELECT * FROM non_existent_table_that_fails_fatally;";
+        }
+
+        // 3. Attempt multi-version upgrade from v10 to v14
+        let result = apply_migrations_atomic(&mut conn, &upgrade_migrations, 10);
+        assert!(result.is_err(), "Upgrade must fail when v14 contains invalid statement");
+
+        // 4. Verify database state: MUST REMAIN AT v10 with ZERO partial migration records
+        let current_ver: i32 = conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0)).unwrap();
+        assert_eq!(current_ver, 10, "Schema version must remain exactly at 10 after rollback");
+
+        let partial_records: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version > 10",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(partial_records, 0, "There must be NO partial migration records for v11, v12, v13");
+
+        // 5. Verify intermediate DDL changes from v12 (category_id in customers) and v14 (hsn_code in invoice_items) were completely rolled back
+        let customer_cols = columns(&conn, "customers");
+        assert!(!customer_cols.contains(&"category_id".to_string()), "v12 category_id column must be rolled back");
+
+        let invoice_item_cols = columns(&conn, "invoice_items");
+        assert!(!invoice_item_cols.contains(&"hsn_code".to_string()), "v14 hsn_code column must be rolled back");
     }
 }
 

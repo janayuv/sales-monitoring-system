@@ -53,6 +53,39 @@ impl DbConnectionManager {
             message: format!("Failed to configure connection PRAGMAs: {}", e),
         })?;
 
+        // Check if there are pending migrations on an existing populated database
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let target_version = crate::database::migrate::get_migrations()
+            .iter()
+            .map(|m| m.version)
+            .max()
+            .unwrap_or(0);
+
+        // If an existing database has pending migrations, take an encrypted snapshot before proceeding
+        if current_version > 0 && current_version < target_version && db_path.exists() {
+            let backup_dir = app_data_dir.join("backups").join("migrations");
+            log::info!(
+                "Existing database version (v{}) is behind target (v{}). Creating pre-migration snapshot for {}...",
+                current_version,
+                target_version,
+                company_code
+            );
+            crate::database::snapshot::create_pre_migration_snapshot(
+                &conn,
+                &db_path,
+                &backup_dir,
+                company_code,
+                target_version,
+            )?;
+        }
+
         // Run migrations
         run_migrations(&mut conn)?;
 

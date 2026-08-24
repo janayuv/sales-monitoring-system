@@ -68,6 +68,19 @@ pub struct ValidationWarningDetail {
     pub expected_value: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../src/types/bindings/ImportMode.ts")]
+pub enum ImportMode {
+    Append,
+    ReSync,
+}
+
+impl Default for ImportMode {
+    fn default() -> Self {
+        ImportMode::Append
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
 #[ts(export, export_to = "../../src/types/bindings/ImportPreview.ts")]
 pub struct ImportPreview {
@@ -79,6 +92,12 @@ pub struct ImportPreview {
     pub warnings: Vec<ValidationWarningDetail>,
     pub proposed_inserts: u32,
     pub proposed_updates: u32,
+    #[serde(default)]
+    pub is_duplicate: bool,
+    #[serde(default)]
+    pub existing_batch_id: Option<i64>,
+    #[serde(default)]
+    pub existing_batch_imported_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   FileUp,
@@ -41,7 +41,7 @@ import { ApiService } from "./services/api";
 import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerDebitNotesTab";
 import { CategoryWiseReportTab } from "./components/CategoryReport/CategoryWiseReportTab";
 import { HsnWiseReportTab } from "./components/HsnReport/HsnWiseReportTab";
-import { ImportPreview } from "./types/bindings/ImportPreview";
+import { ImportWizardTab } from "./components/ImportWizard/ImportWizardTab";
 
 
 import { ImportTemplateRow } from "./types/bindings/ImportTemplateRow";
@@ -127,12 +127,6 @@ function App() {
 
   // Import View States
   const [templates, setTemplates] = useState<ImportTemplateRow[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
-  const [selectedFilePath, setSelectedFilePath] = useState("");
-  const [isPreviewing, setIsPreviewing] = useState(false);
-  const [previewData, setPreviewData] = useState<ImportPreview | null>(null);
-  const [importStatus, setImportStatus] = useState<"idle" | "importing" | "success" | "error">("idle");
-  const [statusMessage, setStatusMessage] = useState("");
 
   // Registers States
   const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
@@ -348,9 +342,6 @@ function App() {
       
       const list = await ApiService.getImportTemplates();
       setTemplates(list);
-      if (list.length > 0) {
-        setSelectedTemplateId(Number(list[0].id));
-      }
     } catch (err: any) {
       console.error(err);
       setIsConnected(false);
@@ -372,8 +363,6 @@ function App() {
       setIsConnected(false);
       localStorage.setItem("was_connected", "false");
       setTemplates([]);
-      setPreviewData(null);
-      setSelectedFilePath("");
       setInvoices([]);
       setRevisions([]);
       setDebitNotes([]);
@@ -875,81 +864,6 @@ function App() {
       await loadInvoices();
     } catch (err: any) {
       alert(`Error deleting record: ${err.message || err}`);
-    }
-  };
-
-  // Open native file picker using Tauri Dialog plugin
-  const handleSelectFile = async () => {
-    try {
-      const selected = await open({
-        filters: [{ name: "Excel & CSV Files", extensions: ["xlsx", "xls", "csv"] }],
-        multiple: false,
-      });
-      if (selected) {
-        const filePath = (Array.isArray(selected) ? selected[0] : selected) as string;
-        if (filePath) {
-          const cleanPath = filePath.trim().replace(/^"(.*)"$/, "$1");
-          setSelectedFilePath(cleanPath);
-          setPreviewData(null);
-          setImportStatus("idle");
-        }
-      }
-    } catch (err: any) {
-      console.error(err);
-      alert(`File selection error: ${err.message || err}`);
-    }
-  };
-
-  const handleFileDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      const path = (file as any).path || file.name;
-      if (path) {
-        const cleanPath = path.trim().replace(/^"(.*)"$/, "$1");
-        setSelectedFilePath(cleanPath);
-        setPreviewData(null);
-        setImportStatus("idle");
-      }
-    }
-  };
-
-  const handleRunPreview = async () => {
-    if (!selectedTemplateId || !selectedFilePath) return;
-    setIsPreviewing(true);
-    setImportStatus("idle");
-    try {
-      const result = await ApiService.previewImportFile(
-        selectedFilePath,
-        selectedTemplateId,
-        "System User"
-      );
-      setPreviewData(result);
-    } catch (err: any) {
-      alert(`Preview Error: ${err.message || err}`);
-    } finally {
-      setIsPreviewing(false);
-    }
-  };
-
-  const handleCommitImport = async () => {
-    if (!selectedTemplateId || !selectedFilePath) return;
-    setImportStatus("importing");
-    try {
-      const batchId = await ApiService.commitImportBatch(
-        selectedFilePath,
-        selectedTemplateId,
-        "System User",
-        "Standard batch outward sales upload"
-      );
-      setImportStatus("success");
-      setStatusMessage(`Successfully imported batch ID: ${batchId}`);
-      setPreviewData(null);
-      setSelectedFilePath("");
-      loadInvoices();
-    } catch (err: any) {
-      setImportStatus("error");
-      setStatusMessage(err.message || err.toString());
     }
   };
 
@@ -1588,248 +1502,10 @@ function App() {
           )}
 
           {activeTab === "import" && (
-            <div className="space-y-8 max-w-5xl">
-              {/* Drag and Drop Zone */}
-              <div
-                onClick={handleSelectFile}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={handleFileDrop}
-                className="border-2 border-dashed border-[var(--ember-border)] hover:border-[var(--ember-primary)] bg-[var(--ember-surface)] hover:bg-[var(--ember-surface-raised)] rounded-xl p-8 text-center cursor-pointer transition-all duration-200 group"
-              >
-                <div className="p-3 bg-[var(--ember-primary-light)] text-[var(--ember-primary)] rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
-                  <FileUp className="w-6 h-6" />
-                </div>
-                <h4 className="text-xs font-bold font-serif text-[var(--ember-text-primary)] uppercase tracking-wider">
-                  Click to Browse or Drag & Drop Sales Spreadsheet
-                </h4>
-                <p className="text-[11px] text-[var(--ember-text-muted)] mt-1">
-                  Supports ERP outward exports in .xlsx, .xls, or .csv formats
-                </p>
-                {selectedFilePath && (
-                  <div className="mt-3 inline-block bg-[var(--ember-surface-raised)] px-3 py-1.5 rounded-lg border border-[var(--ember-border)] text-xs font-mono text-[var(--ember-primary)]">
-                    Selected: {selectedFilePath}
-                  </div>
-                )}
-              </div>
-
-              {/* Import Setup Card */}
-              <div className="ember-card p-6">
-                <h3 className="text-sm font-bold font-serif text-[var(--ember-primary)] mb-6 uppercase tracking-wider">Configure Import Job</h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--ember-text-secondary)] mb-2">Selected Mapping Template</label>
-                    <select
-                      value={selectedTemplateId || ""}
-                      onChange={(e) => setSelectedTemplateId(Number(e.target.value))}
-                      className="w-full ember-input p-2.5 text-xs font-semibold"
-                    >
-                      {templates.map((t) => (
-                        <option key={t.id?.toString()} value={t.id?.toString()}>
-                          {t.template_name} ({t.source_type})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-[var(--ember-text-secondary)] mb-2">Excel File Source Path</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Browse or paste file path (e.g. C:\Reports\DailySales.xlsx)..."
-                        value={selectedFilePath}
-                        onChange={(e) => {
-                          const rawPath = e.target.value;
-                          const cleanPath = rawPath.trim().replace(/^"(.*)"$/, "$1");
-                          setSelectedFilePath(cleanPath);
-                          setPreviewData(null);
-                          setImportStatus("idle");
-                        }}
-                        className="flex-1 ember-input p-2.5 text-xs font-mono"
-                      />
-                      <button
-                        onClick={handleSelectFile}
-                        className="ember-btn-primary px-4 py-2.5 text-xs flex items-center gap-1.5"
-                      >
-                        <FileSpreadsheet className="w-4 h-4" /> Browse
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-3 border-t border-[var(--ember-border)] pt-6">
-                  {selectedFilePath && (
-                    <button
-                      onClick={handleRunPreview}
-                      disabled={isPreviewing}
-                      className="ember-btn-secondary px-5 py-2.5 text-xs flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                      {isPreviewing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                      Run Validation Preview
-                    </button>
-                  )}
-
-                  {previewData && previewData.errors.length === 0 && (
-                    <button
-                      onClick={handleCommitImport}
-                      disabled={importStatus === "importing"}
-                      className="ember-btn-primary px-5 py-2.5 text-xs flex items-center gap-1.5 cursor-pointer"
-                    >
-                      {importStatus === "importing" ? (
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <CheckCircle className="w-4 h-4" />
-                      )}
-                      Commit Import Batch
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Status alerts */}
-              {importStatus === "success" && (
-                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 flex gap-4 text-emerald-800 dark:text-emerald-200">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
-                  <div>
-                    <h4 className="font-bold text-sm text-[var(--ember-text-primary)]">Import Completed Successfully</h4>
-                    <p className="text-xs text-[var(--ember-text-secondary)] mt-1">{statusMessage}</p>
-                  </div>
-                </div>
-              )}
-              {importStatus === "error" && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 flex gap-4 text-rose-800 dark:text-rose-200">
-                  <XCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
-                  <div>
-                    <h4 className="font-bold text-sm text-[var(--ember-text-primary)]">Import Failed</h4>
-                    <p className="text-xs text-[var(--ember-text-secondary)] mt-1">{statusMessage}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Preview Analysis Panel */}
-              {previewData && (
-                <div className="ember-card p-6 space-y-6">
-                  <div className="flex items-center justify-between border-b border-[var(--ember-border)] pb-4">
-                    <div>
-                      <h4 className="text-sm font-bold font-serif text-[var(--ember-primary)]">Validation Results Summary</h4>
-                      <p className="text-[10px] text-[var(--ember-text-muted)] font-mono mt-0.5">SHA256 File Signature: {previewData.batch_hash}</p>
-                    </div>
-                    <div className="flex gap-4 text-xs font-semibold font-mono">
-                      <span className="text-[var(--ember-primary)]">{previewData.row_count - 1} rows parsed</span>
-                      <span className="text-emerald-700 dark:text-emerald-400">+{previewData.proposed_inserts} new</span>
-                      <span className="text-blue-700 dark:text-blue-400">*{previewData.proposed_updates} updates</span>
-                      <span className="text-rose-700 dark:text-rose-400">{previewData.errors.length} errors</span>
-                      <span className="text-amber-700 dark:text-amber-400">{previewData.warnings.length} warnings</span>
-                    </div>
-                  </div>
-
-                  {/* Errors */}
-                  {previewData.errors.length > 0 && (
-                    <div className="space-y-2">
-                      <h5 className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
-                        <XCircle className="w-4 h-4" /> Validation Errors (Blocks Import)
-                      </h5>
-                      <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
-                              <th className="p-3">Excel Row</th>
-                              <th className="p-3">Invoice No</th>
-                              <th className="p-3">Field Key</th>
-                              <th className="p-3">Error Scenario</th>
-                              <th className="p-3">Actual Value</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[var(--ember-border-subtle)]">
-                            {previewData.errors.map((err, i) => (
-                              <tr key={i} className="hover:bg-[var(--ember-surface)] text-rose-700 dark:text-rose-300">
-                                <td className="p-3">
-                                  {err.row_no === 0 ? (
-                                    <span className="font-semibold text-rose-700 dark:text-rose-300 bg-rose-500/15 px-2 py-0.5 rounded text-[11px]">
-                                      Header Row 1
-                                    </span>
-                                  ) : (
-                                    <span>Row {err.row_no}</span>
-                                  )}
-                                </td>
-                                <td className="p-3 font-mono text-[var(--ember-text-muted)]">
-                                  {err.row_no === 0 ? "Header Column" : (err.invoice_no || "N/A")}
-                                </td>
-                                <td className="p-3 font-semibold text-[var(--ember-text-primary)] font-mono">{err.field_name}</td>
-                                <td className="p-3">
-                                  {err.error_type === "ERR_IMPORT_001" ? (
-                                    <span className="font-semibold text-rose-600 dark:text-rose-400">Missing Column Header</span>
-                                  ) : err.error_type === "ERR_IMPORT_002" ? (
-                                    <span className="font-semibold text-rose-600 dark:text-rose-400">Duplicate File</span>
-                                  ) : (
-                                    err.error_type
-                                  )}
-                                </td>
-                                <td className="p-3 font-mono bg-rose-500/5">
-                                  {err.error_type === "ERR_IMPORT_002" ? (
-                                    <span className="text-rose-700 dark:text-rose-300 font-sans text-xs font-semibold">
-                                      This file has already been imported into your database in a previous batch. Double importing identical files is blocked to prevent data duplication.
-                                    </span>
-                                  ) : err.row_no === 0 ? (
-                                    <span className="text-amber-700 dark:text-amber-300 font-sans text-xs">
-                                      Column for '<strong className="text-[var(--ember-text-primary)]">{err.field_name}</strong>' was not found in Row 1 of your Excel file.
-                                    </span>
-                                  ) : (
-                                    err.actual_value
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Warnings */}
-                  {previewData.warnings.length > 0 && (
-                    <div className="space-y-2">
-                      <h5 className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-                        <AlertTriangle className="w-4 h-4" /> Import Warnings (Auto-Resolves/Seed Registry Queue)
-                      </h5>
-                      <div className="border border-[var(--ember-border)] rounded-lg overflow-hidden bg-[var(--ember-surface-raised)] text-xs">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="bg-[var(--ember-surface)] text-[var(--ember-text-secondary)] font-bold border-b border-[var(--ember-border)]">
-                              <th className="p-3">Excel Row</th>
-                              <th className="p-3">Invoice No</th>
-                              <th className="p-3">Field Key</th>
-                              <th className="p-3">Warning Type</th>
-                              <th className="p-3">Description</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[var(--ember-border-subtle)]">
-                            {previewData.warnings.map((wrn, i) => (
-                              <tr key={i} className="hover:bg-[var(--ember-surface)] text-amber-800 dark:text-amber-200">
-                                <td className="p-3 font-mono">{wrn.row_no}</td>
-                                <td className="p-3 font-mono text-[var(--ember-text-muted)]">{wrn.invoice_no || "N/A"}</td>
-                                <td className="p-3 font-semibold text-[var(--ember-text-secondary)] font-mono">{wrn.field_name}</td>
-                                <td className="p-3 font-mono">{wrn.warning_type}</td>
-                                <td className="p-3">
-                                  {wrn.warning_type === "ERR_VALIDATION_004" ? (
-                                    <span className="flex items-center gap-1">
-                                      Unrecognized code: <strong className="text-[var(--ember-primary)] font-mono">{wrn.actual_value}</strong>. Auto-creates registry in review queue.
-                                    </span>
-                                  ) : (
-                                    <span>Totals mismatch. Expected sum: {wrn.expected_value}</span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <ImportWizardTab
+              templates={templates}
+              onImportSuccess={loadInvoices}
+            />
           )}
 
           {activeTab === "reports" && (
