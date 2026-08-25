@@ -94,7 +94,7 @@ pub fn query_tally_export_rows(
 
     let tally_register_code: String = conn
         .query_row(
-            "SELECT setting_value FROM app_settings WHERE setting_key = 'tally_register_code'",
+            "SELECT value FROM app_settings WHERE key = 'tally_register_code'",
             [],
             |row| row.get(0),
         )

@@ -158,7 +158,8 @@ pub fn get_backup_status(
     })
 }
 
-/// Fetch an app setting value by key, returning default_val if not set
+/// Fetch an app setting value by key, returning default_val if not set.
+/// Aligned with the database schema: `app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`.
 #[tauri::command]
 pub fn get_app_setting(
     state: State<'_, DbState>,
@@ -176,9 +177,10 @@ pub fn get_app_setting(
 
     let fallback = default_val.unwrap_or_default();
 
+    // Query setting value using canonical table schema (key, value)
     let val: String = conn
         .query_row(
-            "SELECT setting_value FROM app_settings WHERE setting_key = ?",
+            "SELECT value FROM app_settings WHERE key = ?",
             [&setting_key],
             |row| row.get(0),
         )
@@ -187,7 +189,8 @@ pub fn get_app_setting(
     Ok(val)
 }
 
-/// Set/upsert an app setting value by key
+/// Set or upsert an app setting value by key.
+/// Uses ON CONFLICT(key) to update the existing record with the new value.
 #[tauri::command]
 pub fn set_app_setting(
     state: State<'_, DbState>,
@@ -203,10 +206,11 @@ pub fn set_app_setting(
         message: "No active database connection profile".to_string(),
     })?;
 
+    // Upsert into app_settings table using canonical (key, value) columns
     conn.execute(
-        "INSERT INTO app_settings (setting_key, setting_value, updated_at)
-         VALUES (?, ?, datetime('now'))
-         ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = datetime('now')",
+        "INSERT INTO app_settings (key, value)
+         VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         rusqlite::params![setting_key, setting_value],
     )
     .map_err(|e| AppError::Db {

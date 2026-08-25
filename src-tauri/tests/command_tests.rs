@@ -83,3 +83,61 @@ fn test_command_endpoints_integration() {
     assert_eq!(updated_details.header.revision_no, 2);
     assert_eq!(updated_details.header.remarks, Some("Command update".to_string()));
 }
+
+#[test]
+fn test_app_settings_and_maintenance_commands() {
+    use tauri_app_lib::commands::maintenance_commands::{
+        get_app_setting, set_app_setting, get_build_constants,
+    };
+
+    let conn = setup_test_db();
+    let db_state = DbState {
+        conn: Mutex::new(Some(conn)),
+        dashboard_cache: Mutex::new(None),
+    };
+
+    let state_ref: &DbState = &db_state;
+    let state: State<'_, DbState> = unsafe { std::mem::transmute(state_ref) };
+
+    // 1. Get non-existent setting with fallback
+    let val = get_app_setting(
+        state.clone(),
+        "updater_channel".to_string(),
+        Some("Production".to_string()),
+    ).unwrap();
+    assert_eq!(val, "Production");
+
+    // 2. Upsert setting
+    set_app_setting(
+        state.clone(),
+        "updater_channel".to_string(),
+        "Preview".to_string(),
+    ).unwrap();
+
+    // 3. Get updated setting
+    let updated_val = get_app_setting(
+        state.clone(),
+        "updater_channel".to_string(),
+        Some("Production".to_string()),
+    ).unwrap();
+    assert_eq!(updated_val, "Preview");
+
+    // 4. Overwrite setting again (idempotent upsert via ON CONFLICT(key))
+    set_app_setting(
+        state.clone(),
+        "updater_channel".to_string(),
+        "Internal".to_string(),
+    ).unwrap();
+
+    let overwritten_val = get_app_setting(
+        state.clone(),
+        "updater_channel".to_string(),
+        None,
+    ).unwrap();
+    assert_eq!(overwritten_val, "Internal");
+
+    // 5. Test build constants
+    let build_consts = get_build_constants();
+    assert!(!build_consts.app_version.is_empty());
+    assert!(!build_consts.rust_version.is_empty());
+}

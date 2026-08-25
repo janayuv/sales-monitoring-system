@@ -36,31 +36,7 @@ export const UpdateDialog: React.FC = () => {
   if (!isOpen || !availableManifest) return null;
 
   const handleUpdate = async () => {
-    try {
-      const stored = localStorage.getItem("updater_analytics_metrics");
-      const metrics = stored
-        ? JSON.parse(stored)
-        : { check_count: 0, download_success: 0, download_failure: 0, install_success: 0, install_failure: 0 };
-      metrics.check_count++;
-      localStorage.setItem("updater_analytics_metrics", JSON.stringify(metrics));
-    } catch {}
-
-    const result = await downloadAndInstall();
-    
-    try {
-      const stored = localStorage.getItem("updater_analytics_metrics");
-      if (stored) {
-        const metrics = JSON.parse(stored);
-        if (result.success) {
-          metrics.download_success++;
-          metrics.install_success++;
-        } else {
-          metrics.download_failure++;
-          metrics.install_failure++;
-        }
-        localStorage.setItem("updater_analytics_metrics", JSON.stringify(metrics));
-      }
-    } catch {}
+    await downloadAndInstall();
   };
 
   const handleSkip = async () => {

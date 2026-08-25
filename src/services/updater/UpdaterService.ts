@@ -151,8 +151,12 @@ export class UpdaterService {
     this.setState("Checking");
     this.emit("UpdateCheckStarted");
 
+    // Track every initiated update check in analytics metrics
+    UpdateLogger.incrementMetric("check_count");
+
     try {
       const channel = await UpdateSettingsService.getChannel();
+      UpdateLogger.log("INFO", "Update check initiated", undefined, `Channel: ${channel}, Force: ${force}`);
 
       // 1. Check via the Rust backend with retry logic (server-side, no webview CORS).
       //    Returns the update info when a newer version exists, or null when up to date.
@@ -167,6 +171,7 @@ export class UpdaterService {
       if (!info) {
         this.setState("NoUpdate");
         this.emit("NoUpdate");
+        UpdateLogger.log("INFO", "Update check completed: System is up to date");
         return { success: true, data: null };
       }
 
@@ -176,6 +181,7 @@ export class UpdaterService {
         if (skipped === info.version) {
           this.setState("NoUpdate");
           this.emit("NoUpdate");
+          UpdateLogger.log("INFO", `Update check skipped for version ${info.version} (user preference)`);
           return { success: true, data: null };
         }
       }
@@ -199,6 +205,7 @@ export class UpdaterService {
       // Update is available!
       this.setState("UpdateAvailable");
       this.emit("UpdateAvailable", manifest);
+      UpdateLogger.log("INFO", `Update available: v${info.version}`, info.version, info.body || undefined);
       return { success: true, data: manifest };
     } catch (e) {
       const isOffline = !navigator.onLine;
@@ -213,6 +220,7 @@ export class UpdaterService {
 
       this.setState("Failed");
       this.emit("Failed", errType, errMsg);
+      UpdateLogger.log("ERROR", `Update check failed: ${errMsg}`, undefined, `Type: ${errType}`);
       return { success: false, error: errType, message: errMsg };
     }
   }
@@ -230,9 +238,11 @@ export class UpdaterService {
     }
 
     this.setState("Downloading");
+    UpdateLogger.log("INFO", "Starting download and installation of update");
 
     let unlistenProgress: UnlistenFn | null = null;
     let unlistenFinished: UnlistenFn | null = null;
+    let isDownloadFinished = false;
 
     try {
       const channel = await UpdateSettingsService.getChannel();
@@ -274,8 +284,11 @@ export class UpdaterService {
       });
 
       unlistenFinished = await listen<void>("custom-updater-finished", () => {
+        isDownloadFinished = true;
         this.setState("Downloaded");
         this.emit("DownloadCompleted");
+        UpdateLogger.incrementMetric("download_success");
+        UpdateLogger.log("INFO", "Update package download completed successfully");
       });
 
       // Run updater check natively to cache update details
@@ -284,6 +297,8 @@ export class UpdaterService {
         if (unlistenProgress) unlistenProgress();
         if (unlistenFinished) unlistenFinished();
         this.setState("Failed");
+        UpdateLogger.incrementMetric("download_failure");
+        UpdateLogger.log("ERROR", "Download failed: Update package is no longer available on server");
         this.emit("Failed", "DownloadFailed", "The update package is no longer available on the server.");
         return {
           success: false,
@@ -292,11 +307,19 @@ export class UpdaterService {
         };
       }
 
+      this.setState("Installing");
+      this.emit("InstallStarted");
+      UpdateLogger.log("INFO", "Beginning update installation...", update.version);
+
       // Execute download and install
       await invoke("install_pending_update_custom");
 
       if (unlistenProgress) unlistenProgress();
       if (unlistenFinished) unlistenFinished();
+
+      // Successful installation
+      UpdateLogger.incrementMetric("install_success");
+      UpdateLogger.log("INFO", "Update installed successfully. Application restart required.", update.version);
 
       this.setState("RestartRequired");
       this.emit("RestartRequired");
@@ -305,8 +328,19 @@ export class UpdaterService {
       if (unlistenProgress) unlistenProgress();
       if (unlistenFinished) unlistenFinished();
       this.setState("Failed");
-      const errType: UpdateError = "InstallFailed";
+
+      // Mutually exclusive failure accounting based on whether download succeeded before failure
+      const errType: UpdateError = isDownloadFinished ? "InstallFailed" : "DownloadFailed";
       const errMsg = e instanceof Error ? e.message : String(e);
+
+      if (isDownloadFinished) {
+        UpdateLogger.incrementMetric("install_failure");
+        UpdateLogger.log("ERROR", `Update installation failed: ${errMsg}`, undefined, `Type: ${errType}`);
+      } else {
+        UpdateLogger.incrementMetric("download_failure");
+        UpdateLogger.log("ERROR", `Update download failed: ${errMsg}`, undefined, `Type: ${errType}`);
+      }
+
       this.emit("Failed", errType, errMsg);
       return { success: false, error: errType, message: errMsg };
     }
@@ -318,10 +352,13 @@ export class UpdaterService {
   public async relaunch(): Promise<void> {
     try {
       this.setState("Idle");
+      UpdateLogger.log("INFO", "Triggering application restart to apply updates.");
       await tauriRelaunch();
     } catch (e) {
       this.setState("Failed");
-      this.emit("Failed", "RestartFailed", `Relaunch failed: ${e}`);
+      const msg = `Relaunch failed: ${e}`;
+      UpdateLogger.log("ERROR", msg);
+      this.emit("Failed", "RestartFailed", msg);
     }
   }
 
@@ -332,6 +369,7 @@ export class UpdaterService {
     if (this.state === "Downloading" || this.state === "Checking" || this.state === "UpdateAvailable") {
       this.setState("Cancelled");
       this.emit("Cancelled");
+      UpdateLogger.log("WARN", "Update operation cancelled by user");
     }
   }
 

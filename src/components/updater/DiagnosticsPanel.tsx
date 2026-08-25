@@ -37,10 +37,8 @@ export const DiagnosticsPanel: React.FC = () => {
 
   const loadMetrics = () => {
     try {
-      const stored = localStorage.getItem("updater_analytics_metrics");
-      if (stored) {
-        setMetrics(JSON.parse(stored));
-      }
+      const data = UpdateLogger.getMetrics();
+      setMetrics(data);
     } catch (e) {
       console.error("Failed to load metrics:", e);
     }
@@ -55,15 +53,9 @@ export const DiagnosticsPanel: React.FC = () => {
 
   const handleResetMetrics = () => {
     if (confirm("Are you sure you want to reset update analytics metrics?")) {
-      const empty = {
-        check_count: 0,
-        download_success: 0,
-        download_failure: 0,
-        install_success: 0,
-        install_failure: 0,
-      };
-      localStorage.setItem("updater_analytics_metrics", JSON.stringify(empty));
-      setMetrics(empty);
+      UpdateLogger.resetMetrics();
+      loadMetrics();
+      loadLogs();
     }
   };
 
