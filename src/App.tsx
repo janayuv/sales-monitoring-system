@@ -42,6 +42,7 @@ import { CustomerDebitNotesTab } from "./components/CustomerDebitNotes/CustomerD
 import { CategoryWiseReportTab } from "./components/CategoryReport/CategoryWiseReportTab";
 import { HsnWiseReportTab } from "./components/HsnReport/HsnWiseReportTab";
 import { ImportWizardTab } from "./components/ImportWizard/ImportWizardTab";
+import { Gstr1AuditTab } from "./components/Gstr1Audit/Gstr1AuditTab";
 
 
 import { ImportTemplateRow } from "./types/bindings/ImportTemplateRow";
@@ -110,7 +111,7 @@ function App() {
   }, []);
 
   // Navigation & Core States
-  const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "cust_debit_notes" | "revisions" | "notes" | "reports" | "settings">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "import" | "registers" | "customer_matching" | "cust_debit_notes" | "revisions" | "notes" | "reports" | "gstr1_audit" | "settings">("dashboard");
 
   const [companyCode, setCompanyCode] = useState<string>(() => {
     return localStorage.getItem("active_company_code") || "DEMO";
@@ -903,6 +904,7 @@ function App() {
             {[
               { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
               { id: "registers", label: "Outward Registers", icon: FileSpreadsheet },
+              { id: "gstr1_audit", label: "GSTR-1 Audit & Recon", icon: ShieldCheck },
               { id: "customer_matching", label: "Customer Master", icon: Users },
               { id: "cust_debit_notes", label: "Customer Debit Notes", icon: FileText },
               { id: "revisions", label: "Price Revisions", icon: Percent },
@@ -1090,6 +1092,14 @@ function App() {
               companyCode={companyCode}
               onOpenDetails={handleOpenDetails}
               onRefreshData={loadInvoices}
+            />
+          )}
+
+          {activeTab === "gstr1_audit" && (
+            <Gstr1AuditTab
+              invoices={invoices}
+              companyCode={companyCode}
+              companyName={companyCode === "DEMO" ? "Demonstration Enterprise Ltd" : companyCode}
             />
           )}
 
